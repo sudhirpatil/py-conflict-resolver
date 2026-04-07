@@ -1,0 +1,1 @@
+# py-conflict-resolver
