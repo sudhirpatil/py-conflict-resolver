@@ -200,7 +200,7 @@ async def resolve(
 
 def run():
     import uvicorn
-    uvicorn.run("conflict_resolver.web.app:app", host="0.0.0.0", port=8999, reload=False)
+    uvicorn.run("conflict_resolver.web.app:app", host="0.0.0.0", port=8999, reload=True)
 
 
 if __name__ == "__main__":

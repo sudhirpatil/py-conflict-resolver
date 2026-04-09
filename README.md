@@ -4,6 +4,39 @@ Automatically resolve Python package version conflicts using an LLM-powered agen
 
 ---
 
+## New machine setup
+
+### Prerequisites
+- Python 3.11 or higher
+- Git
+
+### Steps
+
+```bash
+# 1. Clone the repo
+git clone <repo-url>
+cd py-conflict-resolver
+
+# 2. Create and activate a virtual environment
+python3 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+
+# 3. Install CLI dependencies
+pip install -e .
+
+# 4. Install web UI dependencies (optional)
+pip install -e ".[web]"
+
+# 5. Configure your API key
+cp .env.example .env
+# Edit .env and set OPENAI_API_KEY (or ANTHROPIC_API_KEY / GOOGLE_API_KEY)
+
+# 6. Verify installation
+conflict-resolver --help
+```
+
+---
+
 ## Installation
 
 ```bash
@@ -83,6 +116,13 @@ conflict-resolver requirements.txt --config ./my-config.toml
 
 ```bash
 conflict-resolver requirements.txt --env-file /path/to/.env
+```
+
+**Launch the web UI:**
+
+```bash
+conflict-resolver-web
+# → open http://localhost:8999
 ```
 
 ---
