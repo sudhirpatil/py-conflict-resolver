@@ -14,7 +14,12 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
-from conflict_resolver.prompts import SYSTEM_PROMPT, build_user_message
+from conflict_resolver.prompts import (
+    SYSTEM_PROMPT,
+    build_user_message,
+    condense_pip_output,
+    diff_requirements,
+)
 from conflict_resolver.venv_manager import VenvManager
 
 logger = logging.getLogger(__name__)
@@ -49,7 +54,7 @@ class ResolverState(TypedDict):
 # ─── Node factories ───────────────────────────────────────────────────────────
 
 
-def make_install_node(venv_manager: VenvManager):
+def make_install_node(venv_manager: VenvManager, pip_timeout: int):
     def install_node(state: ResolverState) -> dict[str, Any]:
         attempt = state["attempt_count"] + 1
         logger.info("Install attempt %d", attempt)
@@ -65,7 +70,7 @@ def make_install_node(venv_manager: VenvManager):
             req_file = Path(f.name)
 
         try:
-            result = venv_manager.install_from_file(req_file)
+            result = venv_manager.install_from_file(req_file, timeout=pip_timeout)
         finally:
             req_file.unlink(missing_ok=True)
 
@@ -84,24 +89,55 @@ def make_install_node(venv_manager: VenvManager):
 
 def make_analyze_node(llm: BaseChatModel):
     def analyze_node(state: ResolverState) -> dict[str, Any]:
-        logger.info("Analyzing pip failure with LLM (attempt %d)", state["attempt_count"])
+        attempt = state["attempt_count"]
+        logger.info("─" * 60)
+        logger.info("Analyzing pip failure with LLM (attempt %d)", attempt)
+        logger.info("─" * 60)
 
+        logger.info("pip error summary:")
+        # Show the last non-empty stderr lines for a quick summary at INFO level
+        for line in state["last_pip_output"].splitlines():
+            stripped = line.strip()
+            if stripped and ("error" in stripped.lower() or "conflict" in stripped.lower()):
+                logger.info("  %s", stripped)
+        logger.debug("Full pip output:\n%s", state["last_pip_output"])
+
+        if state["failed_attempts"]:
+            logger.info(
+                "Including %d previous failed attempt(s) in LLM context to avoid repeats",
+                len(state["failed_attempts"]),
+            )
+
+        logger.info("Sending prompt to LLM…")
         human_msg = build_user_message(
-            attempt=state["attempt_count"],
+            attempt=attempt,
             max_loops=_get_max_loops_from_state(state),
             requirements_content=state["current_requirements"],
             pip_output=state["last_pip_output"],
             failed_attempts=state["failed_attempts"],
         )
+        logger.debug("LLM prompt (human message):\n%s", human_msg)
 
         response = llm.invoke(
             [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=human_msg)]
         )
 
+        raw_response = response.content if isinstance(response.content, str) else str(response.content)
+        logger.info("LLM response received (%d chars)", len(raw_response))
+        logger.debug("Raw LLM response:\n%s", raw_response)
+
+        # Store a compact diff (not the full requirements) and condensed pip
+        # errors (no download noise) to keep token usage low across iterations.
+        prev_requirements = (
+            state["failed_attempts"][-1]["_full_requirements"]
+            if state["failed_attempts"]
+            else state["original_requirements"]
+        )
         new_failed = state["failed_attempts"] + [
             {
-                "requirements": state["current_requirements"],
-                "pip_output": state["last_pip_output"],
+                "requirements": diff_requirements(prev_requirements, state["current_requirements"]),
+                "pip_output": condense_pip_output(state["last_pip_output"]),
+                "_full_requirements": state["current_requirements"],  # kept for next diff, not sent to LLM
             }
         ]
 
@@ -122,7 +158,11 @@ def make_fix_node():
                 last_ai = msg.content if isinstance(msg.content, str) else str(msg.content)
                 break
 
+        logger.info("Parsing LLM response into requirements…")
+        had_fences = bool(_FENCE_RE.search(last_ai))
         fixed = _strip_markdown_fences(last_ai).strip()
+        if had_fences:
+            logger.debug("Stripped markdown fences from LLM output")
 
         # Validate: must have at least one non-comment, non-empty line
         non_empty = [
@@ -136,8 +176,24 @@ def make_fix_node():
             )
             fixed = state["current_requirements"]
         else:
-            logger.debug("LLM proposed fixed requirements:\n%s", fixed)
+            prev_lines = set(state["current_requirements"].splitlines())
+            new_lines = set(fixed.splitlines())
+            added = new_lines - prev_lines
+            removed = prev_lines - new_lines
+            if added or removed:
+                logger.info("Requirements diff from LLM fix:")
+                for line in sorted(removed):
+                    if line.strip():
+                        logger.info("  - %s", line)
+                for line in sorted(added):
+                    if line.strip():
+                        logger.info("  + %s", line)
+            else:
+                logger.info("LLM returned identical requirements (no changes)")
+            logger.debug("Fixed requirements:\n%s", fixed)
 
+        logger.info("Proceeding to next install attempt…")
+        logger.info("─" * 60)
         return {"current_requirements": fixed}
 
     return fix_node
@@ -184,11 +240,11 @@ def make_router(max_loops: int):
 # ─── Graph builder ────────────────────────────────────────────────────────────
 
 
-def build_graph(llm: BaseChatModel, venv_manager: VenvManager, max_loops: int):
+def build_graph(llm: BaseChatModel, venv_manager: VenvManager, max_loops: int, pip_timeout: int = 300):
     """Build and compile the LangGraph conflict-resolution graph."""
     graph = StateGraph(ResolverState)
 
-    graph.add_node("install", make_install_node(venv_manager))
+    graph.add_node("install", make_install_node(venv_manager, pip_timeout))
     graph.add_node("analyze", make_analyze_node(llm))
     graph.add_node("fix", make_fix_node())
     graph.add_node("finish", make_finish_node(max_loops))

@@ -17,8 +17,17 @@ dependencies = [
     "python-dotenv>=1.0",
 ]
 
+[project.optional-dependencies]
+web = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "python-multipart>=0.0.9",
+    "aiofiles>=23.0",
+]
+
 [project.scripts]
 conflict-resolver = "conflict_resolver.cli:main"
+conflict-resolver-web = "conflict_resolver.web.app:run"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/conflict_resolver"]

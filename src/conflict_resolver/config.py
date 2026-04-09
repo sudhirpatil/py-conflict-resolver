@@ -18,6 +18,7 @@ class LLMConfig:
 @dataclass
 class AgentConfig:
     max_loops: int
+    pip_timeout: int
 
 
 @dataclass
@@ -39,6 +40,7 @@ def _parse_toml(data: dict) -> AppConfig:
     )
     agent = AgentConfig(
         max_loops=int(agent_data.get("max_loops", 10)),
+        pip_timeout=int(agent_data.get("pip_timeout", 300)),
     )
     available_models = {
         provider: cfg.get("available", [])

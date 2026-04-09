@@ -30,6 +30,9 @@ Examples:
   conflict-resolver requirements.txt --provider anthropic --model claude-sonnet-4-6
   conflict-resolver requirements.txt --max-loops 5 --config ./my-config.toml
   conflict-resolver requirements.txt --env-file /path/to/.env
+  conflict-resolver requirements.txt --python 3.11
+  conflict-resolver requirements.txt --python python3.12
+  conflict-resolver requirements.txt --python /usr/local/bin/python3.10
 
 Environment variables (set directly or via .env file):
   OPENAI_API_KEY     Required when provider is "openai"
@@ -84,6 +87,16 @@ Environment variables (set directly or via .env file):
         default=None,
         metavar="N",
         help="Override max agent iterations from config (default: 10)",
+    )
+    parser.add_argument(
+        "--python",
+        default=None,
+        metavar="PYTHON",
+        help=(
+            "Python version or executable for the temp venv "
+            "(e.g. '3.11', 'python3.12', '/usr/local/bin/python3.10'). "
+            "Defaults to the current interpreter."
+        ),
     )
     parser.add_argument(
         "--env-file",
@@ -159,6 +172,7 @@ def main() -> None:
     logger.info("Output:   %s", output_path)
     logger.info("Provider: %s / %s", config.llm.provider, config.llm.model)
     logger.info("Max loops: %d", config.agent.max_loops)
+    logger.info("Python:   %s", args.python or f"current interpreter ({sys.version.split()[0]})")
 
     # Build LLM
     try:
@@ -170,8 +184,8 @@ def main() -> None:
     # Run agent with venv lifecycle managed by context manager
     final_state: ResolverState | None = None
     try:
-        with VenvManager() as vm:
-            graph = build_graph(llm, vm, config.agent.max_loops)
+        with VenvManager(python=args.python) as vm:
+            graph = build_graph(llm, vm, config.agent.max_loops, config.agent.pip_timeout)
 
             initial_state: ResolverState = {
                 "original_requirements_path": str(requirements_path),
