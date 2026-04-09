@@ -131,3 +131,67 @@ def build_user_message(
     )
 
     return "\n".join(parts)
+
+
+MANUAL_ANALYSIS_SYSTEM_PROMPT = """\
+You are an expert Python packaging and environment engineer.
+You will be given a requirements.txt and the full output from attempting to install it.
+
+Return ONLY a valid JSON object with exactly these two keys — no markdown fences, no extra text:
+{
+  "issue_summary": "<2-4 sentence plain-English description of what was found: what installed successfully, what failed, and the overall state of the requirements>",
+  "root_cause": "<technical explanation of the root cause(s): version conflicts, overly strict pins, missing system libraries, Python version incompatibilities, OS dependencies, missing build tools (Rust, C compiler), deprecated packages, environment issues, etc. Be specific — name exact packages and versions involved.>"
+}
+"""
+
+MANUAL_RECOMMENDATIONS_SYSTEM_PROMPT = """\
+You are an expert Python packaging and environment engineer.
+You will be given a requirements.txt, its pip install output, and a root cause analysis.
+Produce concrete manual fix recommendations the user can follow.
+
+Return ONLY a valid JSON array — no markdown fences, no extra text:
+[
+  {
+    "title": "<short title for this recommendation>",
+    "steps": ["<concrete shell command or action>", "..."]
+  }
+]
+
+Rules:
+- Always return at least one recommendation.
+- Cover every distinct issue found: version conflicts, system/OS libraries,
+  build tools, Python version mismatches, network/proxy issues, deprecated packages, etc.
+- Use exact package names, version numbers, and runnable shell commands.
+- If install succeeded without errors, give proactive guidance: loosen overly
+  strict pins, suggest pip-compile/lockfile, note deprecation risks, etc.
+"""
+
+
+def build_manual_analysis_prompt(original_requirements: str, pip_output: str) -> str:
+    """Prompt to get issue summary and root cause from original requirements + pip output."""
+    parts = [
+        "--- requirements.txt (original, uploaded by user) ---",
+        original_requirements.strip(),
+        "\n--- pip install output ---",
+        pip_output.strip() or "(no pip output captured)",
+        "\nAnalyze and return the JSON now:",
+    ]
+    return "\n".join(parts)
+
+
+def build_manual_recommendations_prompt(
+    original_requirements: str,
+    pip_output: str,
+    root_cause: str,
+) -> str:
+    """Prompt to get manual fix recommendations given requirements, pip output and root cause."""
+    parts = [
+        "--- requirements.txt (original, uploaded by user) ---",
+        original_requirements.strip(),
+        "\n--- pip install output ---",
+        pip_output.strip() or "(no pip output captured)",
+        "\n--- Root cause analysis ---",
+        root_cause.strip(),
+        "\nReturn the recommendations JSON array now:",
+    ]
+    return "\n".join(parts)

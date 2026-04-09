@@ -61,6 +61,14 @@ async def resolve(
         from conflict_resolver.config import load_config, LLMConfig, AgentConfig, AppConfig
         from conflict_resolver.llm_factory import create_llm
         from conflict_resolver.venv_manager import VenvManager
+        from conflict_resolver.prompts import (
+            MANUAL_ANALYSIS_SYSTEM_PROMPT,
+            MANUAL_RECOMMENDATIONS_SYSTEM_PROMPT,
+            build_manual_analysis_prompt,
+            build_manual_recommendations_prompt,
+        )
+        from langchain_core.messages import HumanMessage, SystemMessage
+        import re as _re
 
         # --- Queue-based logging handler so we can stream log lines to SSE ---
         # Attach directly to the conflict_resolver package logger so uvicorn's
@@ -122,6 +130,77 @@ async def resolve(
 
             req_path.unlink(missing_ok=True)
 
+            # ── Manual fix recommendations (fully independent from auto-fix) ──
+            # 1. Install the user's ORIGINAL requirements.txt in a fresh venv
+            # 2. Capture pip output (errors, warnings, successes)
+            # 3. Two LLM calls: analysis (summary + root cause), then recommendations
+            # 4. Venv is always deleted regardless of outcome
+            logger.info("Starting manual fix analysis using original requirements.txt…")
+            manual_fix_json = "{}"
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w", suffix=".txt", prefix="manual_req_", delete=False
+                ) as mf:
+                    mf.write(original_text)
+                    manual_req_path = Path(mf.name)
+
+                manual_pip_lines: list[str] = []
+
+                def _manual_pip_callback(line: str):
+                    manual_pip_lines.append(line)
+
+                with VenvManager(
+                    python=python_version or None,
+                    line_callback=_manual_pip_callback,
+                ) as manual_vm:
+                    logger.info("Installing original requirements.txt for manual analysis…")
+                    manual_result = manual_vm.install_from_file(
+                        manual_req_path, timeout=agent_cfg.pip_timeout
+                    )
+
+                manual_req_path.unlink(missing_ok=True)
+                manual_pip_output = manual_result.combined_output
+
+                logger.info("Generating issue summary and root cause…")
+                analysis_response = llm.invoke([
+                    SystemMessage(content=MANUAL_ANALYSIS_SYSTEM_PROMPT),
+                    HumanMessage(content=build_manual_analysis_prompt(
+                        original_text, manual_pip_output
+                    )),
+                ])
+                analysis_raw = analysis_response.content if isinstance(analysis_response.content, str) else str(analysis_response.content)
+                fence = _re.search(r"```(?:json)?\s*\n?(.*?)```", analysis_raw, _re.DOTALL)
+                analysis_raw = fence.group(1).strip() if fence else analysis_raw.strip()
+                analysis = json.loads(analysis_raw)
+                root_cause = analysis.get("root_cause", "")
+
+                logger.info("Generating manual fix recommendations…")
+                rec_response = llm.invoke([
+                    SystemMessage(content=MANUAL_RECOMMENDATIONS_SYSTEM_PROMPT),
+                    HumanMessage(content=build_manual_recommendations_prompt(
+                        original_text, manual_pip_output, root_cause
+                    )),
+                ])
+                rec_raw = rec_response.content if isinstance(rec_response.content, str) else str(rec_response.content)
+                fence = _re.search(r"```(?:json)?\s*\n?(.*?)```", rec_raw, _re.DOTALL)
+                rec_raw = fence.group(1).strip() if fence else rec_raw.strip()
+                recommendations = json.loads(rec_raw)
+
+                manual_fix_json = json.dumps({
+                    "issue_summary": analysis.get("issue_summary", ""),
+                    "root_cause": root_cause,
+                    "recommendations": recommendations,
+                })
+                logger.info("Manual fix analysis complete.")
+
+            except Exception as exc:
+                logger.warning("Manual fix analysis failed: %s", exc)
+                manual_fix_json = json.dumps({
+                    "issue_summary": "Could not generate manual fix recommendations.",
+                    "root_cause": str(exc),
+                    "recommendations": [],
+                })
+
             if final_state.get("last_install_success") and final_state.get("resolved_requirements"):
                 resolved = final_state["resolved_requirements"]
                 diff_lines = list(
@@ -138,6 +217,7 @@ async def resolve(
                     "success": True,
                     "resolved": resolved,
                     "diff": "\n".join(diff_lines),
+                    "manual_fix": manual_fix_json,
                 }
             else:
                 # Summarise what was tried
@@ -161,6 +241,7 @@ async def resolve(
                     "error_message": final_state.get("error_message", "Unknown error"),
                     "last_pip_errors": "\n".join(error_lines) or last_pip[-2000:],
                     "attempts_summary": "\n\n".join(summary_lines) or "No attempts recorded.",
+                    "manual_fix": manual_fix_json,
                 }
 
         except Exception as exc:
@@ -171,6 +252,7 @@ async def resolve(
                 "error_message": str(exc),
                 "last_pip_errors": "",
                 "attempts_summary": "",
+                "manual_fix": "{}",
             }
         finally:
             pkg_log.removeHandler(handler)

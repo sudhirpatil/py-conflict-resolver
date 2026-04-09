@@ -308,6 +308,52 @@
     .download-btn:hover {
       background: #a7f3d0;
     }
+
+    /* Manual fix card */
+    .info-box {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 8px;
+      padding: 0.85rem 1rem;
+      font-size: 0.85rem;
+      color: #1e40af;
+      margin-bottom: 0.75rem;
+      line-height: 1.6;
+    }
+
+    .warn-box {
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      border-radius: 8px;
+      padding: 0.85rem 1rem;
+      font-size: 0.85rem;
+      color: #92400e;
+      margin-bottom: 0.75rem;
+      line-height: 1.6;
+    }
+
+    .rec-block {
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 1rem 1.1rem;
+      margin-bottom: 0.85rem;
+      background: #f9fafb;
+    }
+
+    .rec-title {
+      font-weight: 600;
+      color: #1f2937;
+      margin-bottom: 0.5rem;
+      font-size: 0.9rem;
+    }
+
+    .rec-steps {
+      margin: 0;
+      padding-left: 1.3rem;
+      color: #374151;
+      font-size: 0.85rem;
+      line-height: 1.7;
+    }
   </style>
 </head>
 
@@ -370,6 +416,12 @@
   <div class="card" id="result-card">
     <h2>Result</h2>
     <div id="result-content"></div>
+  </div>
+
+  <!-- Manual fix recommendations card -->
+  <div class="card" id="manual-card" style="display:none">
+    <h2>Manual Fix Recommendations</h2>
+    <div id="manual-content"></div>
   </div>
 
   <script>
@@ -492,11 +544,11 @@
         logTitle.innerHTML = "❌ Could not resolve conflicts";
 
         let html = `<span class="badge badge-fail">✗ Failed</span>`;
-        html += `<p style="color:#fca5a5;margin-bottom:0.75rem">${escHtml(data.error_message)}</p>`;
+        html += `<p style="color:#dc2626;margin-bottom:0.75rem">${escHtml(data.error_message)}</p>`;
 
         if (data.last_pip_errors) {
           html += `<p class="section-label">Last pip errors</p>`;
-          html += `<div class="text-box" style="color:#f87171">${escHtml(data.last_pip_errors)}</div>`;
+          html += `<div class="text-box" style="color:#dc2626">${escHtml(data.last_pip_errors)}</div>`;
         }
 
         if (data.attempts_summary) {
@@ -506,6 +558,43 @@
 
         resultEl.innerHTML = html;
       }
+
+      showManualFix(data.manual_fix || "{}");
+    }
+
+    function showManualFix(rawJson) {
+      const manualCard = document.getElementById("manual-card");
+      const manualEl   = document.getElementById("manual-content");
+      manualCard.style.display = "block";
+
+      let data;
+      try { data = JSON.parse(rawJson); } catch (_) {
+        manualEl.innerHTML = `<p style="color:#6b7280">No recommendations available.</p>`;
+        return;
+      }
+
+      let html = "";
+
+      if (data.issue_summary) {
+        html += `<p class="section-label">Issue Summary</p>
+                 <div class="info-box">${escHtml(data.issue_summary)}</div>`;
+      }
+      if (data.root_cause) {
+        html += `<p class="section-label">Root Cause</p>
+                 <div class="warn-box">${escHtml(data.root_cause)}</div>`;
+      }
+      if (data.recommendations && data.recommendations.length) {
+        html += `<p class="section-label">How to Fix Manually</p>`;
+        for (const rec of data.recommendations) {
+          const steps = (rec.steps || []).map(s => `<li>${escHtml(s)}</li>`).join("");
+          html += `<div class="rec-block">
+                     <div class="rec-title">${escHtml(rec.title)}</div>
+                     <ol class="rec-steps">${steps}</ol>
+                   </div>`;
+        }
+      }
+
+      manualEl.innerHTML = html || `<p style="color:#6b7280">No recommendations available.</p>`;
     }
 
     runBtn.addEventListener("click", async () => {
@@ -515,6 +604,8 @@
       // Reset UI
       logBox.innerHTML = "";
       resultEl.innerHTML = "";
+      document.getElementById("manual-content").innerHTML = "";
+      document.getElementById("manual-card").style.display = "none";
       logCard.style.display = "block";
       resultCard.style.display = "none";
       logTitle.innerHTML = `<span class="spinner" id="spinner"></span> Agent running…`;
