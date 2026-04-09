@@ -79,11 +79,11 @@ async def resolve(
 
         handler = QueueHandler()
         handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
-        handler.setLevel(logging.DEBUG)
+        handler.setLevel(logging.INFO)
 
         pkg_log = logging.getLogger("conflict_resolver")
         pkg_log.addHandler(handler)
-        pkg_log.setLevel(logging.DEBUG)
+        pkg_log.setLevel(logging.INFO)
         pkg_log.propagate = False  # don't double-log through uvicorn's root handlers
 
         final_payload: dict[str, Any] = {}

@@ -47,7 +47,7 @@
       width: 100%;
       max-width: 820px;
       margin-bottom: 1.5rem;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
     }
 
     .card h2 {
@@ -190,11 +190,12 @@
     }
 
     .log-INFO {
-      color: #1f2937;
+      color: #9ca3af;
     }
 
     .log-DEBUG {
-      color: #9ca3af;
+      color: #d1d5db;
+      opacity: 0.5;
     }
 
     .log-WARNING {
@@ -206,7 +207,14 @@
     }
 
     .log-pip {
-      color: #2563eb;
+      color: #9ca3af;
+      opacity: 0.6;
+    }
+
+    /* Logs from conflict_resolver — prominent blue */
+    .log-agent {
+      color: sandybrown;
+      font-weight: 400;
     }
 
     .spinner {
@@ -484,6 +492,7 @@
 
     function logClass(text) {
       if (text.startsWith("pip:")) return "log-pip";
+      if (text.includes("conflict_resolver")) return "log-agent";
       if (text.startsWith("DEBUG")) return "log-DEBUG";
       if (text.startsWith("WARNING")) return "log-WARNING";
       if (text.startsWith("ERROR")) return "log-ERROR";
@@ -564,7 +573,7 @@
 
     function showManualFix(rawJson) {
       const manualCard = document.getElementById("manual-card");
-      const manualEl   = document.getElementById("manual-content");
+      const manualEl = document.getElementById("manual-content");
       manualCard.style.display = "block";
 
       let data;
