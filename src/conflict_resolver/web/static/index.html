@@ -166,6 +166,34 @@
       color: #fff;
     }
 
+    /* Upload card — compact */
+    #upload-card {
+      padding: 1rem 1.75rem;
+    }
+
+    #upload-card .upload-area {
+      padding: 0.7rem 1rem;
+      margin-bottom: 0.65rem;
+    }
+
+    #upload-card .upload-icon {
+      font-size: 1.2rem;
+      margin-bottom: 0.15rem;
+    }
+
+    #upload-card .upload-label {
+      font-size: 0.85rem;
+    }
+
+    #upload-card #file-name {
+      margin-top: 0.2rem;
+    }
+
+    #upload-card .btn {
+      padding: 0.55rem;
+      font-size: 0.92rem;
+    }
+
     /* Logs */
     #log-card {
       display: none;
@@ -370,40 +398,9 @@
   <h1>py-conflict-resolver</h1>
   <p class="subtitle">Resolve Python package version conflicts with an LLM agent</p>
 
-  <!-- Config card -->
-  <div class="card">
-    <h2>Configuration</h2>
-
-    <div class="form-row">
-      <div class="form-group">
-        <label for="provider">LLM Provider</label>
-        <select id="provider">
-          <option value="openai">OpenAI</option>
-          <option value="anthropic">Anthropic</option>
-          <option value="gemini">Gemini</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label for="model">Model</label>
-        <select id="model"></select>
-      </div>
-    </div>
-
-    <div class="form-row">
-      <div class="form-group">
-        <label for="max-loops">Max Loops</label>
-        <input type="number" id="max-loops" value="10" min="1" max="50" />
-      </div>
-      <div class="form-group">
-        <label for="python-version">Python Version (optional)</label>
-        <input type="text" id="python-version" placeholder="e.g. 3.11 or python3.12" />
-      </div>
-    </div>
-  </div>
-
   <!-- Upload card -->
-  <div class="card">
-    <h2>Upload requirements.txt</h2>
+  <div class="card" id="upload-card">
+    <!-- <h2>Upload requirements.txt</h2> -->
     <div class="upload-area" id="upload-area">
       <input type="file" id="file-input" accept=".txt" />
       <div class="upload-icon">📄</div>
@@ -433,26 +430,6 @@
   </div>
 
   <script>
-    // ── Model lists ──────────────────────────────────────────────────────────
-    const MODELS = {
-      openai: ["gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "o3", "o4-mini"],
-      anthropic: ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
-      gemini: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
-    };
-
-    const providerEl = document.getElementById("provider");
-    const modelEl = document.getElementById("model");
-
-    function populateModels() {
-      const provider = providerEl.value;
-      modelEl.innerHTML = MODELS[provider].map(m =>
-        `<option value="${m}">${m}</option>`
-      ).join("");
-    }
-
-    providerEl.addEventListener("change", populateModels);
-    populateModels();
-
     // ── File upload ──────────────────────────────────────────────────────────
     const fileInput = document.getElementById("file-input");
     const uploadArea = document.getElementById("upload-area");
@@ -622,10 +599,6 @@
 
       const form = new FormData();
       form.append("file", file);
-      form.append("provider", providerEl.value);
-      form.append("model", modelEl.value);
-      form.append("max_loops", document.getElementById("max-loops").value);
-      form.append("python_version", document.getElementById("python-version").value);
 
       const resp = await fetch("/resolve", { method: "POST", body: form });
       const reader = resp.body.getReader();

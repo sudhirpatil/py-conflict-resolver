@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -37,10 +37,6 @@ async def root():
 @app.post("/resolve")
 async def resolve(
     file: UploadFile = File(...),
-    provider: str = Form("openai"),
-    model: str = Form("gpt-4.1"),
-    max_loops: int = Form(10),
-    python_version: str = Form(""),
 ):
     """
     Upload a requirements.txt, run the agent, stream logs via SSE.
@@ -89,11 +85,13 @@ async def resolve(
         final_payload: dict[str, Any] = {}
 
         try:
-            # Build config from form values (skip file-based config)
-            llm_cfg = LLMConfig(provider=provider, model=model, temperature=0.2)
-            agent_cfg = AgentConfig(max_loops=max_loops, pip_timeout=300)
-            available_models: dict[str, list[str]] = {}
-            cfg = AppConfig(llm=llm_cfg, agent=agent_cfg, available_models=available_models)
+            # Load settings from config.toml
+            cfg = load_config()
+            logger.info(
+                "Using config: provider=%s model=%s max_loops=%d pip_timeout=%d",
+                cfg.llm.provider, cfg.llm.model,
+                cfg.agent.max_loops, cfg.agent.pip_timeout,
+            )
 
             llm = create_llm(cfg.llm)
 
@@ -108,10 +106,10 @@ async def resolve(
                 log_queue.put(json.dumps({"type": "log", "text": f"pip: {line}"}))
 
             with VenvManager(
-                python=python_version or None,
+                python=cfg.agent.python_version if hasattr(cfg.agent, "python_version") else None,
                 line_callback=pip_callback,
             ) as vm:
-                graph = build_graph(llm, vm, max_loops, agent_cfg.pip_timeout)
+                graph = build_graph(llm, vm, cfg.agent.max_loops, cfg.agent.pip_timeout)
 
                 initial_state = {
                     "original_requirements_path": str(req_path),
@@ -150,12 +148,12 @@ async def resolve(
                     manual_pip_lines.append(line)
 
                 with VenvManager(
-                    python=python_version or None,
+                    python=cfg.agent.python_version if hasattr(cfg.agent, "python_version") else None,
                     line_callback=_manual_pip_callback,
                 ) as manual_vm:
                     logger.info("Installing original requirements.txt for manual analysis…")
                     manual_result = manual_vm.install_from_file(
-                        manual_req_path, timeout=agent_cfg.pip_timeout
+                        manual_req_path, timeout=cfg.agent.pip_timeout
                     )
 
                 manual_req_path.unlink(missing_ok=True)
