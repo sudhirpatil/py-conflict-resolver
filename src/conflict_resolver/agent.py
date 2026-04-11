@@ -15,10 +15,16 @@ from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
 from conflict_resolver.prompts import (
-    SYSTEM_PROMPT,
-    build_user_message,
+    TOOL_USE_SYSTEM_PROMPT,
+    build_tool_use_message,
     condense_pip_output,
     diff_requirements,
+)
+from conflict_resolver.req_tools import (
+    AddPackage,
+    RemovePackage,
+    SetPackageVersion,
+    apply_tool_calls,
 )
 from conflict_resolver.venv_manager import VenvManager
 
@@ -88,6 +94,8 @@ def make_install_node(venv_manager: VenvManager, pip_timeout: int):
 
 
 def make_analyze_node(llm: BaseChatModel):
+    llm_with_tools = llm.bind_tools([SetPackageVersion, RemovePackage, AddPackage])
+
     def analyze_node(state: ResolverState) -> dict[str, Any]:
         attempt = state["attempt_count"]
         logger.info("─" * 60)
@@ -108,8 +116,8 @@ def make_analyze_node(llm: BaseChatModel):
                 len(state["failed_attempts"]),
             )
 
-        logger.info("Sending prompt to LLM…")
-        human_msg = build_user_message(
+        logger.info("Sending prompt to LLM (with tool use)…")
+        human_msg = build_tool_use_message(
             attempt=attempt,
             max_loops=_get_max_loops_from_state(state),
             requirements_content=state["current_requirements"],
@@ -118,8 +126,8 @@ def make_analyze_node(llm: BaseChatModel):
         )
         logger.debug("LLM prompt (human message):\n%s", human_msg)
 
-        response = llm.invoke(
-            [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=human_msg)]
+        response = llm_with_tools.invoke(
+            [SystemMessage(content=TOOL_USE_SYSTEM_PROMPT), HumanMessage(content=human_msg)]
         )
 
         raw_response = response.content if isinstance(response.content, str) else str(response.content)
@@ -151,18 +159,30 @@ def make_analyze_node(llm: BaseChatModel):
 
 def make_fix_node():
     def fix_node(state: ResolverState) -> dict[str, Any]:
-        # Extract the last AIMessage content
-        last_ai: str = ""
+        # Extract the last AIMessage
+        last_ai_msg: AIMessage | None = None
         for msg in reversed(state["messages"]):
             if isinstance(msg, AIMessage):
-                last_ai = msg.content if isinstance(msg.content, str) else str(msg.content)
+                last_ai_msg = msg
                 break
 
-        logger.info("Parsing LLM response into requirements…")
-        had_fences = bool(_FENCE_RE.search(last_ai))
-        fixed = _strip_markdown_fences(last_ai).strip()
-        if had_fences:
-            logger.debug("Stripped markdown fences from LLM output")
+        tool_calls = getattr(last_ai_msg, "tool_calls", None) or []
+
+        if tool_calls:
+            logger.info("Applying %d tool call(s) from LLM…", len(tool_calls))
+            fixed = apply_tool_calls(state["current_requirements"], tool_calls)
+        else:
+            # Fallback: parse raw text (existing logic)
+            logger.info("No tool calls in LLM response — falling back to text parsing…")
+            last_ai: str = (
+                last_ai_msg.content
+                if last_ai_msg and isinstance(last_ai_msg.content, str)
+                else str(last_ai_msg.content) if last_ai_msg else ""
+            )
+            had_fences = bool(_FENCE_RE.search(last_ai))
+            fixed = _strip_markdown_fences(last_ai).strip()
+            if had_fences:
+                logger.debug("Stripped markdown fences from LLM output")
 
         # Validate: must have at least one non-comment, non-empty line
         non_empty = [

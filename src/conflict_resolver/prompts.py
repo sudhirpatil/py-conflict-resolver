@@ -133,6 +133,64 @@ def build_user_message(
     return "\n".join(parts)
 
 
+def build_tool_use_message(
+    attempt: int,
+    max_loops: int,
+    requirements_content: str,
+    pip_output: str,
+    failed_attempts: list[dict[str, str]],
+) -> str:
+    """Build the human message for the tool-use LLM path.
+
+    Identical structure to build_user_message but ends with an instruction to
+    call tools rather than emit raw text — prevents the LLM from falling back
+    to free-text generation.
+    """
+    parts: list[str] = []
+
+    parts.append(f"Attempt {attempt} of {max_loops}.")
+
+    if failed_attempts:
+        parts.append(
+            f"\nPrevious failed attempts ({len(failed_attempts)}) — do NOT repeat these fixes:\n"
+        )
+        for i, fa in enumerate(failed_attempts, 1):
+            parts.append(f"--- Attempt {i} changes (diff) ---\n{fa['requirements']}")
+            parts.append(f"--- Attempt {i} pip errors ---\n{fa['pip_output']}\n")
+
+    parts.append("--- Current requirements.txt ---")
+    parts.append(requirements_content.strip())
+
+    parts.append("\n--- pip errors ---")
+    parts.append(condense_pip_output(pip_output).strip())
+
+    parts.append(
+        "\nCall the appropriate tools (set_package_version, remove_package, add_package) "
+        "to fix only the conflicting packages. Do NOT output raw text."
+    )
+
+    return "\n".join(parts)
+
+
+TOOL_USE_SYSTEM_PROMPT = """\
+You are an expert Python packaging engineer specializing in resolving pip dependency conflicts.
+
+You will be given the current requirements.txt contents and pip install errors.
+Use the provided tools to make TARGETED changes — only touch packages involved in the conflict.
+
+Available tools:
+- set_package_version: pin or relax a version constraint for an existing package
+- remove_package: remove a package only if no version can resolve the conflict
+- add_package: add a new package pin (e.g. to pin a transitive dep explicitly)
+
+Rules:
+- Call tools for ONLY the packages that need changing — leave others untouched.
+- Prefer set_package_version over remove_package.
+- Pin versions precisely (e.g. ==1.2.3) when resolving conflicts.
+- Never hallucinate package names that do not exist on PyPI.
+- You may call multiple tools in one response.
+"""
+
 MANUAL_ANALYSIS_SYSTEM_PROMPT = """\
 You are an expert Python packaging and environment engineer.
 You will be given a requirements.txt and the full output from attempting to install it.
