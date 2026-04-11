@@ -73,12 +73,19 @@ async def resolve(
             def emit(self, record: logging.LogRecord):
                 log_queue.put(json.dumps({"type": "log", "text": self.format(record)}))
 
+        _fmt = logging.Formatter("%(levelname)s %(name)s: %(message)s")
+
         handler = QueueHandler()
-        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+        handler.setFormatter(_fmt)
         handler.setLevel(logging.INFO)
+
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(_fmt)
+        console_handler.setLevel(logging.INFO)
 
         pkg_log = logging.getLogger("conflict_resolver")
         pkg_log.addHandler(handler)
+        pkg_log.addHandler(console_handler)
         pkg_log.setLevel(logging.INFO)
         pkg_log.propagate = False  # don't double-log through uvicorn's root handlers
 
@@ -254,6 +261,7 @@ async def resolve(
             }
         finally:
             pkg_log.removeHandler(handler)
+            pkg_log.removeHandler(console_handler)
             # Push final result then sentinel
             log_queue.put(json.dumps(final_payload))
             log_queue.put(None)  # sentinel → stream ends

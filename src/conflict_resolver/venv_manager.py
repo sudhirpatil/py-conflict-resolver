@@ -150,8 +150,7 @@ class VenvManager:
                     store.append(line)
                     if self._line_callback:
                         self._line_callback(line.rstrip())
-                    else:
-                        print(line, end="", file=file, flush=True)
+                    print(line, end="", file=file, flush=True)
 
             t_out = threading.Thread(target=_stream, args=(process.stdout, stdout_lines, sys.stdout))
             t_err = threading.Thread(target=_stream, args=(process.stderr, stderr_lines, sys.stderr))
