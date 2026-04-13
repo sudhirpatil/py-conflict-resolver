@@ -22,7 +22,6 @@ from conflict_resolver.prompts import (
 )
 from conflict_resolver.req_tools import (
     AddPackage,
-    RemovePackage,
     SetPackageVersion,
     apply_tool_calls,
 )
@@ -45,6 +44,7 @@ class ResolverState(TypedDict):
     # Result of the last install attempt
     last_install_success: bool
     last_pip_output: str
+    last_dry_run_output: str
 
     # History of failed attempts passed to LLM for context
     failed_attempts: list[dict[str, str]]
@@ -56,8 +56,51 @@ class ResolverState(TypedDict):
     resolved_requirements: str | None
     error_message: str | None
 
+    # PyPI version cache — populated by pypi_lookup node, reused across iterations
+    pypi_versions: dict[str, list[str]]
+
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+
+def _packages_from_requirements(requirements_text: str) -> list[str]:
+    """Return package names parsed from a requirements text block."""
+    from conflict_resolver.req_tools import _REQ_LINE_RE
+    names = []
+    for line in requirements_text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        m = _REQ_LINE_RE.match(stripped)
+        if m:
+            names.append(m.group(1))
+    return names
+
 
 # ─── Node factories ───────────────────────────────────────────────────────────
+
+
+def make_pypi_lookup_node():
+    def pypi_lookup_node(state: ResolverState) -> dict[str, Any]:
+        from conflict_resolver.pypi_client import fetch_versions_bulk
+
+        packages = _packages_from_requirements(state["current_requirements"])
+        existing_cache = state.get("pypi_versions") or {}
+
+        to_fetch = [p for p in packages if p not in existing_cache]
+
+        if to_fetch:
+            logger.info("Fetching PyPI version data for %d package(s)…", len(to_fetch))
+            fresh = fetch_versions_bulk(to_fetch)
+            logger.info(
+                "PyPI lookup complete: %d/%d packages found", len(fresh), len(to_fetch)
+            )
+            return {"pypi_versions": {**existing_cache, **fresh}}
+        else:
+            logger.info("All packages already in PyPI cache — skipping fetch")
+            return {"pypi_versions": existing_cache}
+
+    return pypi_lookup_node
 
 
 def make_install_node(venv_manager: VenvManager, pip_timeout: int):
@@ -76,6 +119,8 @@ def make_install_node(venv_manager: VenvManager, pip_timeout: int):
             req_file = Path(f.name)
 
         try:
+            logger.info("Running pip dry-run to capture dependency conflict graph…")
+            dry_run_output = venv_manager.dry_run_install(req_file)
             result = venv_manager.install_from_file(req_file, timeout=pip_timeout)
         finally:
             req_file.unlink(missing_ok=True)
@@ -83,6 +128,7 @@ def make_install_node(venv_manager: VenvManager, pip_timeout: int):
         update: dict[str, Any] = {
             "last_install_success": result.success,
             "last_pip_output": result.combined_output,
+            "last_dry_run_output": dry_run_output,
             "attempt_count": attempt,
         }
         if result.success:
@@ -94,7 +140,7 @@ def make_install_node(venv_manager: VenvManager, pip_timeout: int):
 
 
 def make_analyze_node(llm: BaseChatModel):
-    llm_with_tools = llm.bind_tools([SetPackageVersion, RemovePackage, AddPackage])
+    llm_with_tools = llm.bind_tools([SetPackageVersion, AddPackage])
 
     def analyze_node(state: ResolverState) -> dict[str, Any]:
         attempt = state["attempt_count"]
@@ -123,6 +169,8 @@ def make_analyze_node(llm: BaseChatModel):
             requirements_content=state["current_requirements"],
             pip_output=state["last_pip_output"],
             failed_attempts=state["failed_attempts"],
+            pypi_versions=state.get("pypi_versions") or {},
+            dry_run_output=state.get("last_dry_run_output") or "",
         )
         logger.debug("LLM prompt (human message):\n%s", human_msg)
 
@@ -265,6 +313,7 @@ def build_graph(llm: BaseChatModel, venv_manager: VenvManager, max_loops: int, p
     graph = StateGraph(ResolverState)
 
     graph.add_node("install", make_install_node(venv_manager, pip_timeout))
+    graph.add_node("pypi_lookup", make_pypi_lookup_node())
     graph.add_node("analyze", make_analyze_node(llm))
     graph.add_node("fix", make_fix_node())
     graph.add_node("finish", make_finish_node(max_loops))
@@ -274,8 +323,9 @@ def build_graph(llm: BaseChatModel, venv_manager: VenvManager, max_loops: int, p
     graph.add_conditional_edges(
         "install",
         make_router(max_loops),
-        {"finish": "finish", "analyze": "analyze"},
+        {"finish": "finish", "analyze": "pypi_lookup"},
     )
+    graph.add_edge("pypi_lookup", "analyze")
     graph.add_edge("analyze", "fix")
     graph.add_edge("fix", "install")
     graph.add_edge("finish", END)

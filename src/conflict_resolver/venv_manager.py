@@ -124,6 +124,33 @@ class VenvManager:
             return self.venv_path / "Scripts" / "pip.exe"
         return self.venv_path / "bin" / "pip"
 
+    def dry_run_install(self, requirements_path: Path, timeout: int = 60) -> str:
+        """Run pip install --dry-run and return combined output.
+
+        Returns the raw output string, or an empty string if dry-run is unsupported
+        (pip < 22.1) or fails for any reason other than a conflict.
+        """
+        env = {**os.environ, "PIP_NO_COLOR": "1", "PIP_DISABLE_PIP_VERSION_CHECK": "1"}
+        try:
+            result = subprocess.run(
+                [str(self.pip_path), "install", "--dry-run", "-r", str(requirements_path)],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=env,
+            )
+            combined = f"=== pip dry-run stdout ===\n{result.stdout}\n\n=== pip dry-run stderr ===\n{result.stderr}"
+            logger.info(
+                "pip dry-run completed (exit code %d)", result.returncode
+            )
+            return combined
+        except subprocess.TimeoutExpired:
+            logger.warning("pip dry-run timed out after %ds — skipping", timeout)
+            return ""
+        except Exception as exc:
+            logger.warning("pip dry-run failed: %s — skipping", exc)
+            return ""
+
     def install_from_file(self, requirements_path: Path, timeout: int = 120) -> InstallResult:
         logger.info("Running pip install -r %s", requirements_path)
         # PIP_NO_COLOR kept for the captured copy sent to the LLM; real-time

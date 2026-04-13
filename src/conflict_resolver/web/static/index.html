@@ -5,6 +5,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>py-conflict-resolver</title>
+  <script src="/static/mermaid.min.js"></script>
   <style>
     *,
     *::before,
@@ -390,6 +391,35 @@
       font-size: 0.85rem;
       line-height: 1.7;
     }
+
+    /* Graph card */
+    #graph-card .mermaid {
+      display: flex;
+      justify-content: center;
+    }
+
+    #graph-card .mermaid svg {
+      max-width: 100%;
+      height: auto;
+    }
+
+    .graph-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem 1.4rem;
+      margin-top: 1rem;
+      font-size: 0.78rem;
+      color: #6b7280;
+    }
+
+    .legend-dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 3px;
+      margin-right: 4px;
+      vertical-align: middle;
+    }
   </style>
 </head>
 
@@ -428,6 +458,54 @@
     <h2>Manual Fix Recommendations</h2>
     <div id="manual-content"></div>
   </div>
+
+  <!-- Agent graph card -->
+  <div class="card" id="graph-card">
+    <h2>Agent Resolution Graph</h2>
+    <div class="mermaid">
+%%{init: {
+  "theme": "base",
+  "themeVariables": {
+    "primaryColor": "#ede9fe",
+    "primaryTextColor": "#3b0764",
+    "primaryBorderColor": "#7c3aed",
+    "lineColor": "#7c3aed",
+    "secondaryColor": "#dbeafe",
+    "tertiaryColor": "#f3f4f6",
+    "edgeLabelBackground": "#f9fafb",
+    "fontSize": "14px"
+  },
+  "flowchart": { "curve": "basis", "htmlLabels": true }
+}}%%
+flowchart TD
+    S(["▶ START"]):::terminal --> install
+    install["📦 install\npip install -r requirements.txt"]:::node
+    pypi_lookup["🔍 pypi_lookup\nFetch real versions from PyPI"]:::node
+    analyze["🤖 analyze\nLLM identifies conflicts"]:::node
+    fix["🔧 fix\nApply tool calls to requirements"]:::node
+    finish["🏁 finish\nLog success or failure"]:::node
+    E(["⏹ END"]):::terminal
+
+    install -->|"✓ success\nor max loops reached"| finish
+    install -->|"✗ failed &amp;\nattempts remaining"| pypi_lookup
+    pypi_lookup --> analyze
+    analyze --> fix
+    fix --> install
+    finish --> E
+
+    classDef terminal fill:#f5f3ff,stroke:#7c3aed,color:#6d28d9,font-weight:600
+    classDef node fill:#ffffff,stroke:#d1d5db,color:#111827
+    </div>
+    <div class="graph-legend">
+      <span><span class="legend-dot" style="background:#f5f3ff;border:1.5px solid #7c3aed"></span>Start / End</span>
+      <span><span class="legend-dot" style="background:#ffffff;border:1.5px solid #d1d5db"></span>Agent node</span>
+      <span style="color:#7c3aed">→ fixed edge &nbsp; ⇢ conditional edge</span>
+    </div>
+  </div>
+
+  <script>
+    mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' });
+  </script>
 
   <script>
     // ── File upload ──────────────────────────────────────────────────────────

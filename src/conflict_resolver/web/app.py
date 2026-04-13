@@ -129,6 +129,8 @@ async def resolve(
                     "messages": [],
                     "resolved_requirements": None,
                     "error_message": None,
+                    "pypi_versions": {},
+                    "last_dry_run_output": "",
                 }
 
                 final_state = graph.invoke(initial_state)

@@ -139,6 +139,8 @@ def build_tool_use_message(
     requirements_content: str,
     pip_output: str,
     failed_attempts: list[dict[str, str]],
+    pypi_versions: dict[str, list[str]] | None = None,
+    dry_run_output: str = "",
 ) -> str:
     """Build the human message for the tool-use LLM path.
 
@@ -161,6 +163,15 @@ def build_tool_use_message(
     parts.append("--- Current requirements.txt ---")
     parts.append(requirements_content.strip())
 
+    if pypi_versions:
+        parts.append("\n--- Available versions on PyPI (latest 10 shown per package) ---")
+        for pkg, versions in sorted(pypi_versions.items()):
+            parts.append(f"{pkg}: {', '.join(versions[:10])}")
+
+    if dry_run_output:
+        parts.append("\n--- pip dry-run (full dependency conflict graph) ---")
+        parts.append(dry_run_output.strip())
+
     parts.append("\n--- pip errors ---")
     parts.append(condense_pip_output(pip_output).strip())
 
@@ -175,18 +186,21 @@ def build_tool_use_message(
 TOOL_USE_SYSTEM_PROMPT = """\
 You are an expert Python packaging engineer specializing in resolving pip dependency conflicts.
 
-You will be given the current requirements.txt contents and pip install errors.
+You will be given the current requirements.txt contents, pip install errors, and a list of real
+available versions from PyPI for each package.
+
 Use the provided tools to make TARGETED changes — only touch packages involved in the conflict.
 
 Available tools:
 - set_package_version: pin or relax a version constraint for an existing package
-- remove_package: remove a package only if no version can resolve the conflict
 - add_package: add a new package pin (e.g. to pin a transitive dep explicitly)
 
 Rules:
 - Call tools for ONLY the packages that need changing — leave others untouched.
-- Prefer set_package_version over remove_package.
+- NEVER remove any package from requirements.txt — removing packages may break programs that depend on them.
+- Resolve conflicts by adjusting version constraints, not by dropping packages.
 - Pin versions precisely (e.g. ==1.2.3) when resolving conflicts.
+- Use ONLY version strings from the "Available versions on PyPI" list — never invent versions.
 - Never hallucinate package names that do not exist on PyPI.
 - You may call multiple tools in one response.
 """

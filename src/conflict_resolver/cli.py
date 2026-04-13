@@ -194,10 +194,12 @@ def main() -> None:
                 "attempt_count": 0,
                 "last_install_success": False,
                 "last_pip_output": "",
+                "last_dry_run_output": "",
                 "failed_attempts": [],
                 "messages": [],
                 "resolved_requirements": None,
                 "error_message": None,
+                "pypi_versions": {},
             }
 
             logger.info("Starting conflict-resolution agent loop…")
