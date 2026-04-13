@@ -116,7 +116,7 @@ async def resolve(
                 python=cfg.agent.python_version if hasattr(cfg.agent, "python_version") else None,
                 line_callback=pip_callback,
             ) as vm:
-                graph = build_graph(llm, vm, cfg.agent.max_loops, cfg.agent.pip_timeout)
+                graph = build_graph(llm, vm, cfg.agent.max_loops, cfg.agent.pip_timeout, cfg.agent.pypi_lookup_enabled)
 
                 initial_state = {
                     "original_requirements_path": str(req_path),

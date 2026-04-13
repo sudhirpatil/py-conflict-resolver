@@ -308,24 +308,34 @@ def make_router(max_loops: int):
 # ─── Graph builder ────────────────────────────────────────────────────────────
 
 
-def build_graph(llm: BaseChatModel, venv_manager: VenvManager, max_loops: int, pip_timeout: int = 300):
+def build_graph(llm: BaseChatModel, venv_manager: VenvManager, max_loops: int, pip_timeout: int = 300, pypi_lookup_enabled: bool = True):
     """Build and compile the LangGraph conflict-resolution graph."""
     graph = StateGraph(ResolverState)
 
     graph.add_node("install", make_install_node(venv_manager, pip_timeout))
-    graph.add_node("pypi_lookup", make_pypi_lookup_node())
     graph.add_node("analyze", make_analyze_node(llm))
     graph.add_node("fix", make_fix_node())
     graph.add_node("finish", make_finish_node(max_loops))
 
     graph.set_entry_point("install")
 
-    graph.add_conditional_edges(
-        "install",
-        make_router(max_loops),
-        {"finish": "finish", "analyze": "pypi_lookup"},
-    )
-    graph.add_edge("pypi_lookup", "analyze")
+    if pypi_lookup_enabled:
+        logger.info("PyPI lookup node enabled")
+        graph.add_node("pypi_lookup", make_pypi_lookup_node())
+        graph.add_conditional_edges(
+            "install",
+            make_router(max_loops),
+            {"finish": "finish", "analyze": "pypi_lookup"},
+        )
+        graph.add_edge("pypi_lookup", "analyze")
+    else:
+        logger.info("PyPI lookup node disabled — skipping directly to analyze")
+        graph.add_conditional_edges(
+            "install",
+            make_router(max_loops),
+            {"finish": "finish", "analyze": "analyze"},
+        )
+
     graph.add_edge("analyze", "fix")
     graph.add_edge("fix", "install")
     graph.add_edge("finish", END)

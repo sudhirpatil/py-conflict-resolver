@@ -185,7 +185,7 @@ def main() -> None:
     final_state: ResolverState | None = None
     try:
         with VenvManager(python=args.python) as vm:
-            graph = build_graph(llm, vm, config.agent.max_loops, config.agent.pip_timeout)
+            graph = build_graph(llm, vm, config.agent.max_loops, config.agent.pip_timeout, config.agent.pypi_lookup_enabled)
 
             initial_state: ResolverState = {
                 "original_requirements_path": str(requirements_path),

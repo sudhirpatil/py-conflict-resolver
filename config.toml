@@ -18,6 +18,10 @@ max_loops = 10
 # Timeout in seconds for each pip install run (increase for slow networks or large packages)
 pip_timeout = 300
 
+# Query PyPI for real available versions before each LLM analysis call.
+# Prevents the LLM from hallucinating version numbers. Disable if offline or on slow networks.
+pypi_lookup_enabled = true
+
 # ─── Available models (for reference and validation) ──────────────────────────
 # To use a different model, change [llm].provider and [llm].model above.
 # The lists below act as an allowlist; adding a model here is required before
