@@ -124,11 +124,12 @@ class VenvManager:
             return self.venv_path / "Scripts" / "pip.exe"
         return self.venv_path / "bin" / "pip"
 
-    def dry_run_install(self, requirements_path: Path, timeout: int = 60) -> str:
-        """Run pip install --dry-run and return combined output.
+    def dry_run_install(self, requirements_path: Path, timeout: int = 60) -> tuple[bool, str]:
+        """Run pip install --dry-run and return (has_conflicts, combined_output).
 
-        Returns the raw output string, or an empty string if dry-run is unsupported
-        (pip < 22.1) or fails for any reason other than a conflict.
+        has_conflicts is True when pip's resolver found errors (exit code != 0).
+        Returns (False, "") if dry-run itself cannot run (pip < 22.1, timeout, etc.)
+        so the caller falls back to a real install.
         """
         env = {**os.environ, "PIP_NO_COLOR": "1", "PIP_DISABLE_PIP_VERSION_CHECK": "1"}
         try:
@@ -140,16 +141,19 @@ class VenvManager:
                 env=env,
             )
             combined = f"=== pip dry-run stdout ===\n{result.stdout}\n\n=== pip dry-run stderr ===\n{result.stderr}"
+            has_conflicts = result.returncode != 0
             logger.info(
-                "pip dry-run completed (exit code %d)", result.returncode
+                "pip dry-run completed (exit code %d) — %s",
+                result.returncode,
+                "conflicts detected" if has_conflicts else "no conflicts",
             )
-            return combined
+            return has_conflicts, combined
         except subprocess.TimeoutExpired:
-            logger.warning("pip dry-run timed out after %ds — skipping", timeout)
-            return ""
+            logger.warning("pip dry-run timed out after %ds — falling back to real install", timeout)
+            return False, ""
         except Exception as exc:
-            logger.warning("pip dry-run failed: %s — skipping", exc)
-            return ""
+            logger.warning("pip dry-run failed: %s — falling back to real install", exc)
+            return False, ""
 
     def install_from_file(self, requirements_path: Path, timeout: int = 120) -> InstallResult:
         logger.info("Running pip install -r %s", requirements_path)

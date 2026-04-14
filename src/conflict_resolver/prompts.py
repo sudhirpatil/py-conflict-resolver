@@ -141,6 +141,7 @@ def build_tool_use_message(
     failed_attempts: list[dict[str, str]],
     pypi_versions: dict[str, list[str]] | None = None,
     dry_run_output: str = "",
+    pypi_requires_dist: dict[str, list[str]] | None = None,
 ) -> str:
     """Build the human message for the tool-use LLM path.
 
@@ -167,6 +168,11 @@ def build_tool_use_message(
         parts.append("\n--- Available versions on PyPI (latest 10 shown per package) ---")
         for pkg, versions in sorted(pypi_versions.items()):
             parts.append(f"{pkg}: {', '.join(versions[:10])}")
+
+    if pypi_requires_dist:
+        parts.append("\n--- Declared dependencies of pinned packages (from PyPI metadata) ---")
+        for pkg, deps in sorted(pypi_requires_dist.items()):
+            parts.append(f"{pkg}: {', '.join(deps)}")
 
     if dry_run_output:
         parts.append("\n--- pip dry-run (full dependency conflict graph) ---")

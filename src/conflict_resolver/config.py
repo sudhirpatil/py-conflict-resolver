@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import tomllib
 from dataclasses import dataclass, field
-from importlib import resources
 from pathlib import Path
 
 
@@ -19,7 +18,7 @@ class LLMConfig:
 class AgentConfig:
     max_loops: int
     pip_timeout: int
-    pypi_lookup_enabled: bool = True
+    pypi_lookup_enabled: bool = False
 
 
 @dataclass

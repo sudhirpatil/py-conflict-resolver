@@ -130,6 +130,7 @@ async def resolve(
                     "resolved_requirements": None,
                     "error_message": None,
                     "pypi_versions": {},
+                    "pypi_requires_dist": {},
                     "last_dry_run_output": "",
                 }
 

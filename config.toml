@@ -20,7 +20,7 @@ pip_timeout = 300
 
 # Query PyPI for real available versions before each LLM analysis call.
 # Prevents the LLM from hallucinating version numbers. Disable if offline or on slow networks.
-pypi_lookup_enabled = true
+pypi_lookup_enabled = false
 
 # ─── Available models (for reference and validation) ──────────────────────────
 # To use a different model, change [llm].provider and [llm].model above.

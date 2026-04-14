@@ -200,6 +200,7 @@ def main() -> None:
                 "resolved_requirements": None,
                 "error_message": None,
                 "pypi_versions": {},
+                "pypi_requires_dist": {},
             }
 
             logger.info("Starting conflict-resolution agent loop…")

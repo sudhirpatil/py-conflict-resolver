@@ -25,7 +25,7 @@ from conflict_resolver.req_tools import (
     SetPackageVersion,
     apply_tool_calls,
 )
-from conflict_resolver.venv_manager import VenvManager
+from conflict_resolver.venv_manager import InstallResult, VenvManager
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,8 @@ class ResolverState(TypedDict):
 
     # PyPI version cache — populated by pypi_lookup node, reused across iterations
     pypi_versions: dict[str, list[str]]
+    # requires_dist for pinned versions — {package: [dep strings]} e.g. {"django": ["asgiref>=3.4.1"]}
+    pypi_requires_dist: dict[str, list[str]]
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -77,28 +79,84 @@ def _packages_from_requirements(requirements_text: str) -> list[str]:
     return names
 
 
+def _pinned_versions_from_requirements(requirements_text: str) -> dict[str, str]:
+    """Return {package: version} for lines with an exact pin (==x.y.z only).
+
+    Only exact pins are returned because requires_dist must be fetched for a
+    specific version — range constraints don't map to a single PyPI endpoint.
+    """
+    from conflict_resolver.req_tools import _REQ_LINE_RE
+    import re as _re
+    _exact = _re.compile(r"^==\s*(.+)$")
+    result: dict[str, str] = {}
+    for line in requirements_text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        m = _REQ_LINE_RE.match(stripped)
+        if not m:
+            continue
+        pkg = m.group(1)
+        spec = (m.group(2) or "").strip()
+        em = _exact.match(spec)
+        if em:
+            result[pkg] = em.group(1).strip()
+    return result
+
+
 # ─── Node factories ───────────────────────────────────────────────────────────
 
 
 def make_pypi_lookup_node():
     def pypi_lookup_node(state: ResolverState) -> dict[str, Any]:
-        from conflict_resolver.pypi_client import fetch_versions_bulk
+        from conflict_resolver.pypi_client import fetch_requires_dist_bulk, fetch_versions_bulk
 
         packages = _packages_from_requirements(state["current_requirements"])
-        existing_cache = state.get("pypi_versions") or {}
+        existing_versions = state.get("pypi_versions") or {}
+        existing_deps = state.get("pypi_requires_dist") or {}
 
-        to_fetch = [p for p in packages if p not in existing_cache]
-
+        # ── Available versions ────────────────────────────────────────────────
+        to_fetch = [p for p in packages if p not in existing_versions]
         if to_fetch:
             logger.info("Fetching PyPI version data for %d package(s)…", len(to_fetch))
             fresh = fetch_versions_bulk(to_fetch)
-            logger.info(
-                "PyPI lookup complete: %d/%d packages found", len(fresh), len(to_fetch)
-            )
-            return {"pypi_versions": {**existing_cache, **fresh}}
+            logger.info("PyPI version lookup complete: %d/%d packages found", len(fresh), len(to_fetch))
+            updated_versions = {**existing_versions, **fresh}
         else:
-            logger.info("All packages already in PyPI cache — skipping fetch")
-            return {"pypi_versions": existing_cache}
+            logger.info("All packages already in PyPI versions cache — skipping")
+            updated_versions = existing_versions
+
+        # ── requires_dist for pinned packages ─────────────────────────────────
+        pinned = _pinned_versions_from_requirements(state["current_requirements"])
+        to_fetch_deps = {
+            pkg: ver for pkg, ver in pinned.items() if pkg not in existing_deps
+        }
+        if to_fetch_deps:
+            logger.info(
+                "Fetching dependency metadata (requires_dist) for %d pinned package(s): %s",
+                len(to_fetch_deps), ", ".join(f"{p}=={v}" for p, v in to_fetch_deps.items()),
+            )
+            fresh_deps = fetch_requires_dist_bulk(to_fetch_deps)
+            logger.info(
+                "requires_dist lookup complete: %d/%d packages have declared dependencies",
+                len(fresh_deps), len(to_fetch_deps),
+            )
+            updated_deps = {**existing_deps, **fresh_deps}
+        else:
+            skipped = set(pinned) - set(to_fetch_deps)
+            if skipped:
+                logger.info(
+                    "requires_dist: %d package(s) already cached — skipping fetch (%s)",
+                    len(skipped), ", ".join(sorted(skipped)),
+                )
+            else:
+                logger.info(
+                    "requires_dist: no exact-pinned packages found in requirements "
+                    "(only exact ==x.y.z pins are looked up; range constraints are skipped)"
+                )
+            updated_deps = existing_deps
+
+        return {"pypi_versions": updated_versions, "pypi_requires_dist": updated_deps}
 
     return pypi_lookup_node
 
@@ -119,9 +177,26 @@ def make_install_node(venv_manager: VenvManager, pip_timeout: int):
             req_file = Path(f.name)
 
         try:
-            logger.info("Running pip dry-run to capture dependency conflict graph…")
-            dry_run_output = venv_manager.dry_run_install(req_file)
-            result = venv_manager.install_from_file(req_file, timeout=pip_timeout)
+            logger.info("Running pip dry-run to detect conflicts before full install…")
+            has_conflicts, dry_run_output = venv_manager.dry_run_install(req_file)
+
+            if has_conflicts:
+                # Dry-run already confirmed conflicts — skip the expensive real install.
+                # Use the dry-run output as pip output so the LLM has full conflict details.
+                logger.info(
+                    "Conflicts detected by dry-run — skipping real pip install to save time"
+                )
+                result = InstallResult(
+                    success=False,
+                    returncode=1,
+                    stdout="",
+                    stderr="",
+                    combined_output=dry_run_output,
+                )
+            else:
+                # Dry-run clean (or dry-run unavailable/timed out) — run real install
+                # to actually write packages to the venv and confirm success.
+                result = venv_manager.install_from_file(req_file, timeout=pip_timeout)
         finally:
             req_file.unlink(missing_ok=True)
 
@@ -162,6 +237,20 @@ def make_analyze_node(llm: BaseChatModel):
                 len(state["failed_attempts"]),
             )
 
+        pypi_versions = state.get("pypi_versions") or {}
+        pypi_requires_dist = state.get("pypi_requires_dist") or {}
+        dry_run_output = state.get("last_dry_run_output") or ""
+
+        logger.info(
+            "Prompt sections: pypi_versions=%d pkg(s), requires_dist=%d pkg(s), dry_run=%s",
+            len(pypi_versions),
+            len(pypi_requires_dist),
+            "yes" if dry_run_output else "no",
+        )
+        if pypi_requires_dist:
+            for pkg, deps in sorted(pypi_requires_dist.items()):
+                logger.info("  requires_dist %s: %s", pkg, ", ".join(deps))
+
         logger.info("Sending prompt to LLM (with tool use)…")
         human_msg = build_tool_use_message(
             attempt=attempt,
@@ -169,8 +258,9 @@ def make_analyze_node(llm: BaseChatModel):
             requirements_content=state["current_requirements"],
             pip_output=state["last_pip_output"],
             failed_attempts=state["failed_attempts"],
-            pypi_versions=state.get("pypi_versions") or {},
-            dry_run_output=state.get("last_dry_run_output") or "",
+            pypi_versions=pypi_versions,
+            dry_run_output=dry_run_output,
+            pypi_requires_dist=pypi_requires_dist,
         )
         logger.debug("LLM prompt (human message):\n%s", human_msg)
 
