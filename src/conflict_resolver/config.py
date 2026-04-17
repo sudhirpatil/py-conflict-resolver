@@ -19,6 +19,8 @@ class AgentConfig:
     max_loops: int
     pip_timeout: int
     pypi_lookup_enabled: bool = False
+    python_versions: dict[str, str] = field(default_factory=dict)
+    # e.g. {"3.6": "", "3.10": "/path/to/python3.10", "3.11": ""}
 
 
 @dataclass
@@ -41,7 +43,8 @@ def _parse_toml(data: dict) -> AppConfig:
     agent = AgentConfig(
         max_loops=int(agent_data.get("max_loops", 10)),
         pip_timeout=int(agent_data.get("pip_timeout", 300)),
-        pypi_lookup_enabled=bool(agent_data.get("pypi_lookup_enabled", True)),
+        pypi_lookup_enabled=bool(agent_data.get("pypi_lookup_enabled", False)),
+        python_versions=dict(agent_data.get("python_versions", {})),
     )
     available_models = {
         provider: cfg.get("available", [])

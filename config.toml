@@ -22,6 +22,14 @@ pip_timeout = 300
 # Prevents the LLM from hallucinating version numbers. Disable if offline or on slow networks.
 pypi_lookup_enabled = false
 
+[agent.python_versions]
+# Absolute paths to Python interpreters for each supported version.
+# Generated from: pyenv which python3.X  (or: ls ~/.pyenv/versions/<ver>/bin/python3.X)
+# To add a version: pyenv install <ver>  — won't change your default Python.
+"3.6"  = "/Users/sudhirpatil/.pyenv/versions/3.6.15/bin/python3.6"
+"3.10" = "/Users/sudhirpatil/.pyenv/versions/3.10.17/bin/python3.10"
+"3.11" = "/Users/sudhirpatil/miniconda3/bin/python3.11"
+
 # ─── Available models (for reference and validation) ──────────────────────────
 # To use a different model, change [llm].provider and [llm].model above.
 # The lists below act as an allowlist; adding a model here is required before

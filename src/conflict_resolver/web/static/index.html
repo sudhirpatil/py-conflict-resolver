@@ -437,6 +437,12 @@
       <p class="upload-label">Drop your <span>requirements.txt</span> here, or click to browse</p>
       <p id="file-name"></p>
     </div>
+    <div id="python-version-row" style="margin-bottom:0.65rem">
+      <label style="font-size:0.82rem;color:#374151;font-weight:500;display:block;margin-bottom:0.3rem">Python Version</label>
+      <div id="version-buttons" style="display:flex;gap:0.5rem;flex-wrap:wrap"></div>
+      <p id="version-warning" style="font-size:0.78rem;color:#d97706;margin-top:0.35rem;display:none"></p>
+      <p id="version-install-hint" style="font-size:0.76rem;color:#6b7280;font-family:'JetBrains Mono','Fira Code',monospace;margin-top:0.2rem;display:none"></p>
+    </div>
     <button class="btn btn-primary" id="run-btn" disabled>Run Conflict Resolver</button>
   </div>
 
@@ -661,6 +667,63 @@ flowchart TD
       manualEl.innerHTML = html || `<p style="color:#6b7280">No recommendations available.</p>`;
     }
 
+    // ── Python version selector ──────────────────────────────────────────────
+    const VERSIONS = ["3.6", "3.10", "3.11"];
+    const INSTALL_CMDS = { "3.6": "3.6.15", "3.10": "3.10.17", "3.11": "3.11.12" };
+    let selectedVersion = "3.11";
+    let availableVersions = {};
+
+    function selectVersion(ver) {
+      selectedVersion = ver;
+      document.querySelectorAll("#version-buttons button").forEach(b => {
+        const active = b.dataset.ver === ver;
+        b.style.background = active ? "linear-gradient(135deg,#7c3aed,#4f46e5)" : "#f9fafb";
+        b.style.color = active ? "#fff" : "#374151";
+        b.style.borderColor = active ? "#7c3aed" : "#d1d5db";
+      });
+      const info = availableVersions[ver];
+      const warning = document.getElementById("version-warning");
+      const hint = document.getElementById("version-install-hint");
+      if (info && info.available === false) {
+        warning.textContent = `Python ${ver} is not available on this machine.`;
+        warning.style.display = "block";
+        hint.textContent = `pyenv install ${INSTALL_CMDS[ver]}  # won't change your default Python`;
+        hint.style.display = "block";
+      } else {
+        warning.style.display = "none";
+        hint.style.display = "none";
+      }
+    }
+
+    function renderVersionSelector() {
+      const container = document.getElementById("version-buttons");
+      container.innerHTML = "";
+      for (const ver of VERSIONS) {
+        const info = availableVersions[ver];
+        const unavailable = info && info.available === false;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.dataset.ver = ver;
+        btn.textContent = `Python ${ver}${unavailable ? " ⚠" : ""}`;
+        btn.title = info ? (info.available ? info.version : `Not found — ${info.path || "not on PATH"}`) : "";
+        btn.style.cssText = "padding:0.3rem 0.85rem;border-radius:99px;font-size:0.82rem;" +
+          "font-weight:600;cursor:pointer;border:1.5px solid;transition:all 0.15s;background:#f9fafb;" +
+          "color:#374151;border-color:#d1d5db";
+        btn.addEventListener("click", () => selectVersion(ver));
+        container.appendChild(btn);
+      }
+      selectVersion(selectedVersion);
+    }
+
+    async function loadPythonVersions() {
+      try {
+        const resp = await fetch("/python-versions");
+        availableVersions = await resp.json();
+      } catch (_) { }
+      renderVersionSelector();
+    }
+    loadPythonVersions();
+
     runBtn.addEventListener("click", async () => {
       const file = fileInput.files[0];
       if (!file) return;
@@ -677,6 +740,7 @@ flowchart TD
 
       const form = new FormData();
       form.append("file", file);
+      form.append("python_version", selectedVersion);
 
       const resp = await fetch("/resolve", { method: "POST", body: form });
       const reader = resp.body.getReader();

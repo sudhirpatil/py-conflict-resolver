@@ -13,8 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi import FastAPI, File, Form, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 load_dotenv(override=False)
@@ -34,9 +34,37 @@ async def root():
     return (_STATIC / "index.html").read_text(encoding="utf-8")
 
 
+@app.get("/python-versions")
+async def python_versions_status():
+    """Return availability of each configured Python version."""
+    import shutil
+    import subprocess
+    from conflict_resolver.config import load_config
+    cfg = load_config()
+    result = {}
+    for ver, path in cfg.agent.python_versions.items():
+        exe = path.strip() if path.strip() else shutil.which(f"python{ver}")
+        if exe and Path(exe).exists():
+            try:
+                out = subprocess.run(
+                    [exe, "--version"], capture_output=True, text=True, timeout=3
+                )
+                result[ver] = {
+                    "available": True,
+                    "path": exe,
+                    "version": out.stdout.strip() or out.stderr.strip(),
+                }
+            except Exception:
+                result[ver] = {"available": False, "path": exe, "version": ""}
+        else:
+            result[ver] = {"available": False, "path": exe or "", "version": ""}
+    return JSONResponse(result)
+
+
 @app.post("/resolve")
 async def resolve(
     file: UploadFile = File(...),
+    python_version: str = Form("3.11"),
 ):
     """
     Upload a requirements.txt, run the agent, stream logs via SSE.
@@ -102,6 +130,20 @@ async def resolve(
 
             llm = create_llm(cfg.llm)
 
+            # Resolve Python interpreter for the requested version
+            python_exe: str | None = None
+            if python_version in cfg.agent.python_versions:
+                configured_path = cfg.agent.python_versions[python_version].strip()
+                python_exe = configured_path if configured_path else f"python{python_version}"
+                logger.info(
+                    "Using Python version: %s (%s)", python_version, python_exe
+                )
+            else:
+                logger.warning(
+                    "Requested python_version %r not in config — using system default",
+                    python_version,
+                )
+
             # Write uploaded requirements to a temp file
             with tempfile.NamedTemporaryFile(
                 mode="w", suffix=".txt", prefix="uploaded_req_", delete=False
@@ -113,7 +155,7 @@ async def resolve(
                 log_queue.put(json.dumps({"type": "log", "text": f"pip: {line}"}))
 
             with VenvManager(
-                python=cfg.agent.python_version if hasattr(cfg.agent, "python_version") else None,
+                python=python_exe,
                 line_callback=pip_callback,
             ) as vm:
                 graph = build_graph(llm, vm, cfg.agent.max_loops, cfg.agent.pip_timeout, cfg.agent.pypi_lookup_enabled)
@@ -158,7 +200,7 @@ async def resolve(
                     manual_pip_lines.append(line)
 
                 with VenvManager(
-                    python=cfg.agent.python_version if hasattr(cfg.agent, "python_version") else None,
+                    python=python_exe,
                     line_callback=_manual_pip_callback,
                 ) as manual_vm:
                     logger.info("Installing original requirements.txt for manual analysis…")
