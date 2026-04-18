@@ -174,6 +174,7 @@ async def resolve(
                     "pypi_versions": {},
                     "pypi_requires_dist": {},
                     "last_dry_run_output": "",
+                    "partial_install_result": None,
                 }
 
                 final_state = graph.invoke(initial_state)
@@ -285,6 +286,14 @@ async def resolve(
                                                       "no matching distribution"))
                 ]
 
+                partial = final_state.get("partial_install_result") or {}
+                if partial:
+                    # Attach original + compatible as plain text for UI diff & download
+                    partial = {
+                        **partial,
+                        "original_requirements": original_text,
+                        "compatible_requirements": "\n".join(partial.get("compatible", [])),
+                    }
                 final_payload = {
                     "type": "result",
                     "success": False,
@@ -292,6 +301,7 @@ async def resolve(
                     "last_pip_errors": "\n".join(error_lines) or last_pip[-2000:],
                     "attempts_summary": "\n\n".join(summary_lines) or "No attempts recorded.",
                     "manual_fix": manual_fix_json,
+                    "partial_install": json.dumps(partial) if partial else "{}",
                 }
 
         except Exception as exc:

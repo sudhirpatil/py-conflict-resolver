@@ -15,7 +15,9 @@ from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
 from conflict_resolver.prompts import (
+    PARTITION_SYSTEM_PROMPT,
     TOOL_USE_SYSTEM_PROMPT,
+    build_partition_prompt,
     build_tool_use_message,
     condense_pip_output,
     diff_requirements,
@@ -60,6 +62,9 @@ class ResolverState(TypedDict):
     pypi_versions: dict[str, list[str]]
     # requires_dist for pinned versions — {package: [dep strings]} e.g. {"django": ["asgiref>=3.4.1"]}
     pypi_requires_dist: dict[str, list[str]]
+
+    # Fallback partial-install result (populated when max_loops exhausted)
+    partial_install_result: dict[str, Any] | None
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -357,6 +362,134 @@ def make_fix_node():
     return fix_node
 
 
+def make_partition_node(llm: BaseChatModel):
+    """Ask LLM to split requirements into compatible vs conflicting groups."""
+
+    def partition_node(state: ResolverState) -> dict[str, Any]:
+        import json as _json
+        import re as _re
+
+        logger.info("─" * 60)
+        logger.info("Partitioning requirements into compatible vs conflicting groups…")
+        logger.info("─" * 60)
+
+        response = llm.invoke([
+            SystemMessage(content=PARTITION_SYSTEM_PROMPT),
+            HumanMessage(content=build_partition_prompt(
+                state["current_requirements"],
+                state["last_pip_output"],
+            )),
+        ])
+        raw = response.content if isinstance(response.content, str) else str(response.content)
+        fence = _re.search(r"```(?:json)?\s*\n?(.*?)```", raw, _re.DOTALL)
+        raw = fence.group(1).strip() if fence else raw.strip()
+
+        try:
+            partition = _json.loads(raw)
+        except Exception as exc:
+            logger.warning("Partition LLM response could not be parsed: %s", exc)
+            partition = {"compatible": [], "conflicting": [], "reason": "parse error"}
+
+        compatible = partition.get("compatible", [])
+        conflicting = partition.get("conflicting", [])
+        reason = partition.get("reason", "")
+        logger.info("Compatible packages (%d): %s", len(compatible), ", ".join(compatible))
+        logger.info("Conflicting packages (%d): %s", len(conflicting), ", ".join(conflicting))
+        if reason:
+            logger.info("Reason: %s", reason)
+
+        return {
+            "partial_install_result": {
+                "compatible": compatible,
+                "conflicting": conflicting,
+                "reason": reason,
+            }
+        }
+
+    return partition_node
+
+
+def make_install_compatible_node(venv_manager: VenvManager, pip_timeout: int):
+    """Install the compatible group normally via pip install -r."""
+
+    def install_compatible_node(state: ResolverState) -> dict[str, Any]:
+        partial = state.get("partial_install_result") or {}
+        compatible = partial.get("compatible", [])
+
+        if not compatible:
+            logger.info("No compatible packages to install — skipping")
+            return {}
+
+        logger.info("Installing %d compatible package(s)…", len(compatible))
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", prefix="compatible_req_", delete=False
+        ) as f:
+            f.write("\n".join(compatible) + "\n")
+            req_file = Path(f.name)
+
+        try:
+            result = venv_manager.install_from_file(req_file, timeout=pip_timeout)
+        finally:
+            req_file.unlink(missing_ok=True)
+
+        partial = {**partial, "compatible_install_success": result.success,
+                   "compatible_install_output": result.combined_output}
+        if result.success:
+            logger.info("Compatible packages installed successfully")
+        else:
+            logger.warning("Compatible package install failed — proceeding anyway")
+        return {"partial_install_result": partial}
+
+    return install_compatible_node
+
+
+def make_install_forced_node(venv_manager: VenvManager, pip_timeout: int):
+    """Force-install conflicting packages one by one with --no-deps."""
+
+    def install_forced_node(state: ResolverState) -> dict[str, Any]:
+        partial = state.get("partial_install_result") or {}
+        conflicting = partial.get("conflicting", [])
+
+        if not conflicting:
+            logger.info("No conflicting packages to force-install — skipping")
+            return {}
+
+        logger.info("Force-installing %d conflicting package(s) with --no-deps…", len(conflicting))
+
+        forced_results: list[dict] = []
+        pip_commands: list[str] = []
+
+        for pkg_spec in conflicting:
+            cmd = f"pip install --no-deps {pkg_spec}"
+            pip_commands.append(cmd)
+            logger.info("  %s", cmd)
+            result = venv_manager.install_single_no_deps(pkg_spec, timeout=pip_timeout)
+            forced_results.append({
+                "package": pkg_spec,
+                "command": cmd,
+                "success": result.success,
+                "output": result.combined_output,
+            })
+
+        partial = {**partial, "forced_results": forced_results, "pip_commands": pip_commands}
+        return {"partial_install_result": partial}
+
+    return install_forced_node
+
+
+def make_pip_check_node(venv_manager: VenvManager):
+    """Run pip check to surface unmet dependencies after forced installs."""
+
+    def pip_check_node(state: ResolverState) -> dict[str, Any]:
+        logger.info("Running pip check to identify unmet dependencies…")
+        check_output = venv_manager.run_pip_check()
+        partial = {**(state.get("partial_install_result") or {}), "pip_check_output": check_output}
+        return {"partial_install_result": partial}
+
+    return pip_check_node
+
+
 def make_finish_node(max_loops: int):
     def finish_node(state: ResolverState) -> dict[str, Any]:
         if state["last_install_success"]:
@@ -389,7 +522,7 @@ def make_router(max_loops: int):
         if state["last_install_success"]:
             return "finish"
         if state["attempt_count"] >= max_loops:
-            return "finish"
+            return "partition"
         return "analyze"
 
     return route_after_install
@@ -407,6 +540,12 @@ def build_graph(llm: BaseChatModel, venv_manager: VenvManager, max_loops: int, p
     graph.add_node("fix", make_fix_node())
     graph.add_node("finish", make_finish_node(max_loops))
 
+    # Fallback partial-install branch (triggered when max_loops exhausted)
+    graph.add_node("partition", make_partition_node(llm))
+    graph.add_node("install_compatible", make_install_compatible_node(venv_manager, pip_timeout))
+    graph.add_node("install_forced", make_install_forced_node(venv_manager, pip_timeout))
+    graph.add_node("pip_check", make_pip_check_node(venv_manager))
+
     graph.set_entry_point("install")
 
     if pypi_lookup_enabled:
@@ -415,7 +554,7 @@ def build_graph(llm: BaseChatModel, venv_manager: VenvManager, max_loops: int, p
         graph.add_conditional_edges(
             "install",
             make_router(max_loops),
-            {"finish": "finish", "analyze": "pypi_lookup"},
+            {"finish": "finish", "analyze": "pypi_lookup", "partition": "partition"},
         )
         graph.add_edge("pypi_lookup", "analyze")
     else:
@@ -423,11 +562,18 @@ def build_graph(llm: BaseChatModel, venv_manager: VenvManager, max_loops: int, p
         graph.add_conditional_edges(
             "install",
             make_router(max_loops),
-            {"finish": "finish", "analyze": "analyze"},
+            {"finish": "finish", "analyze": "analyze", "partition": "partition"},
         )
 
     graph.add_edge("analyze", "fix")
     graph.add_edge("fix", "install")
+
+    # Fallback chain: partition → install_compatible → install_forced → pip_check → finish
+    graph.add_edge("partition", "install_compatible")
+    graph.add_edge("install_compatible", "install_forced")
+    graph.add_edge("install_forced", "pip_check")
+    graph.add_edge("pip_check", "finish")
+
     graph.add_edge("finish", END)
 
     return graph.compile()

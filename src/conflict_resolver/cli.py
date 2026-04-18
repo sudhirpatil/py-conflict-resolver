@@ -201,6 +201,7 @@ def main() -> None:
                 "error_message": None,
                 "pypi_versions": {},
                 "pypi_requires_dist": {},
+                "partial_install_result": None,
             }
 
             logger.info("Starting conflict-resolution agent loop…")

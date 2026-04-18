@@ -13,7 +13,7 @@ temperature = 0.2
 
 [agent]
 # Maximum number of install+fix iterations before giving up
-max_loops = 10
+max_loops = 5
 
 # Timeout in seconds for each pip install run (increase for slow networks or large packages)
 pip_timeout = 300

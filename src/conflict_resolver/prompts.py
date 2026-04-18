@@ -211,6 +211,41 @@ Rules:
 - You may call multiple tools in one response.
 """
 
+PARTITION_SYSTEM_PROMPT = """\
+You are an expert Python packaging engineer.
+You will be given a requirements.txt and pip conflict errors.
+The conflicts cannot be fully resolved — your job is to split the packages into two groups:
+
+1. "compatible": packages that CAN be installed together without conflicts. Keep their original version constraints where possible.
+2. "conflicting": packages that CAUSE the conflicts and cannot be reconciled with the rest.
+
+Return ONLY a valid JSON object — no markdown fences, no extra text:
+{
+  "compatible": ["package==x.y.z", "other>=1.0", "..."],
+  "conflicting": ["badpkg==1.2.3", "..."],
+  "reason": "<one sentence explaining why the conflicting packages cannot be reconciled>"
+}
+
+Rules:
+- Every package from the input requirements.txt must appear in exactly one group.
+- Prefer moving the fewest packages possible to "conflicting".
+- Keep original version specs exactly as given.
+- Never hallucinate package names.
+"""
+
+
+def build_partition_prompt(requirements: str, pip_output: str) -> str:
+    """Prompt to partition requirements into compatible vs conflicting groups."""
+    parts = [
+        "--- requirements.txt ---",
+        requirements.strip(),
+        "\n--- pip conflict errors ---",
+        condense_pip_output(pip_output).strip() or pip_output.strip(),
+        "\nPartition the packages and return the JSON now:",
+    ]
+    return "\n".join(parts)
+
+
 MANUAL_ANALYSIS_SYSTEM_PROMPT = """\
 You are an expert Python packaging and environment engineer.
 You will be given a requirements.txt and the full output from attempting to install it.
