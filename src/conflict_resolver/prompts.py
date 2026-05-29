@@ -133,6 +133,119 @@ def build_user_message(
     return "\n".join(parts)
 
 
+def build_tool_use_message(
+    attempt: int,
+    max_loops: int,
+    requirements_content: str,
+    pip_output: str,
+    failed_attempts: list[dict[str, str]],
+    pypi_versions: dict[str, list[str]] | None = None,
+    dry_run_output: str = "",
+    pypi_requires_dist: dict[str, list[str]] | None = None,
+) -> str:
+    """Build the human message for the tool-use LLM path.
+
+    Identical structure to build_user_message but ends with an instruction to
+    call tools rather than emit raw text — prevents the LLM from falling back
+    to free-text generation.
+    """
+    parts: list[str] = []
+
+    parts.append(f"Attempt {attempt} of {max_loops}.")
+
+    if failed_attempts:
+        parts.append(
+            f"\nPrevious failed attempts ({len(failed_attempts)}) — do NOT repeat these fixes:\n"
+        )
+        for i, fa in enumerate(failed_attempts, 1):
+            parts.append(f"--- Attempt {i} changes (diff) ---\n{fa['requirements']}")
+            parts.append(f"--- Attempt {i} pip errors ---\n{fa['pip_output']}\n")
+
+    parts.append("--- Current requirements.txt ---")
+    parts.append(requirements_content.strip())
+
+    if pypi_versions:
+        parts.append("\n--- Available versions on PyPI (latest 10 shown per package) ---")
+        for pkg, versions in sorted(pypi_versions.items()):
+            parts.append(f"{pkg}: {', '.join(versions[:10])}")
+
+    if pypi_requires_dist:
+        parts.append("\n--- Declared dependencies of pinned packages (from PyPI metadata) ---")
+        for pkg, deps in sorted(pypi_requires_dist.items()):
+            parts.append(f"{pkg}: {', '.join(deps)}")
+
+    if dry_run_output:
+        parts.append("\n--- pip dry-run (full dependency conflict graph) ---")
+        parts.append(dry_run_output.strip())
+
+    parts.append("\n--- pip errors ---")
+    parts.append(condense_pip_output(pip_output).strip())
+
+    parts.append(
+        "\nCall the appropriate tools (set_package_version, remove_package, add_package) "
+        "to fix only the conflicting packages. Do NOT output raw text."
+    )
+
+    return "\n".join(parts)
+
+
+TOOL_USE_SYSTEM_PROMPT = """\
+You are an expert Python packaging engineer specializing in resolving pip dependency conflicts.
+
+You will be given the current requirements.txt contents, pip install errors, and a list of real
+available versions from PyPI for each package.
+
+Use the provided tools to make TARGETED changes — only touch packages involved in the conflict.
+
+Available tools:
+- set_package_version: pin or relax a version constraint for an existing package
+- add_package: add a new package pin (e.g. to pin a transitive dep explicitly)
+
+Rules:
+- Call tools for ONLY the packages that need changing — leave others untouched.
+- NEVER remove any package from requirements.txt — removing packages may break programs that depend on them.
+- Resolve conflicts by adjusting version constraints, not by dropping packages.
+- Pin versions precisely (e.g. ==1.2.3) when resolving conflicts.
+- Use ONLY version strings from the "Available versions on PyPI" list — never invent versions.
+- Never hallucinate package names that do not exist on PyPI.
+- You may call multiple tools in one response.
+"""
+
+PARTITION_SYSTEM_PROMPT = """\
+You are an expert Python packaging engineer.
+You will be given a requirements.txt and pip conflict errors.
+The conflicts cannot be fully resolved — your job is to split the packages into two groups:
+
+1. "compatible": packages that CAN be installed together without conflicts. Keep their original version constraints where possible.
+2. "conflicting": packages that CAUSE the conflicts and cannot be reconciled with the rest.
+
+Return ONLY a valid JSON object — no markdown fences, no extra text:
+{
+  "compatible": ["package==x.y.z", "other>=1.0", "..."],
+  "conflicting": ["badpkg==1.2.3", "..."],
+  "reason": "<one sentence explaining why the conflicting packages cannot be reconciled>"
+}
+
+Rules:
+- Every package from the input requirements.txt must appear in exactly one group.
+- Prefer moving the fewest packages possible to "conflicting".
+- Keep original version specs exactly as given.
+- Never hallucinate package names.
+"""
+
+
+def build_partition_prompt(requirements: str, pip_output: str) -> str:
+    """Prompt to partition requirements into compatible vs conflicting groups."""
+    parts = [
+        "--- requirements.txt ---",
+        requirements.strip(),
+        "\n--- pip conflict errors ---",
+        condense_pip_output(pip_output).strip() or pip_output.strip(),
+        "\nPartition the packages and return the JSON now:",
+    ]
+    return "\n".join(parts)
+
+
 MANUAL_ANALYSIS_SYSTEM_PROMPT = """\
 You are an expert Python packaging and environment engineer.
 You will be given a requirements.txt and the full output from attempting to install it.

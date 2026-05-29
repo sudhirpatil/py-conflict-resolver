@@ -124,6 +124,37 @@ class VenvManager:
             return self.venv_path / "Scripts" / "pip.exe"
         return self.venv_path / "bin" / "pip"
 
+    def dry_run_install(self, requirements_path: Path, timeout: int = 60) -> tuple[bool, str]:
+        """Run pip install --dry-run and return (has_conflicts, combined_output).
+
+        has_conflicts is True when pip's resolver found errors (exit code != 0).
+        Returns (False, "") if dry-run itself cannot run (pip < 22.1, timeout, etc.)
+        so the caller falls back to a real install.
+        """
+        env = {**os.environ, "PIP_NO_COLOR": "1", "PIP_DISABLE_PIP_VERSION_CHECK": "1"}
+        try:
+            result = subprocess.run(
+                [str(self.pip_path), "install", "--dry-run", "-r", str(requirements_path)],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=env,
+            )
+            combined = f"=== pip dry-run stdout ===\n{result.stdout}\n\n=== pip dry-run stderr ===\n{result.stderr}"
+            has_conflicts = result.returncode != 0
+            logger.info(
+                "pip dry-run completed (exit code %d) — %s",
+                result.returncode,
+                "conflicts detected" if has_conflicts else "no conflicts",
+            )
+            return has_conflicts, combined
+        except subprocess.TimeoutExpired:
+            logger.warning("pip dry-run timed out after %ds — falling back to real install", timeout)
+            return False, ""
+        except Exception as exc:
+            logger.warning("pip dry-run failed: %s — falling back to real install", exc)
+            return False, ""
+
     def install_from_file(self, requirements_path: Path, timeout: int = 120) -> InstallResult:
         logger.info("Running pip install -r %s", requirements_path)
         # PIP_NO_COLOR kept for the captured copy sent to the LLM; real-time
@@ -150,8 +181,7 @@ class VenvManager:
                     store.append(line)
                     if self._line_callback:
                         self._line_callback(line.rstrip())
-                    else:
-                        print(line, end="", file=file, flush=True)
+                    print(line, end="", file=file, flush=True)
 
             t_out = threading.Thread(target=_stream, args=(process.stdout, stdout_lines, sys.stdout))
             t_err = threading.Thread(target=_stream, args=(process.stderr, stderr_lines, sys.stderr))
@@ -203,6 +233,69 @@ class VenvManager:
             stderr=stderr_text,
             combined_output=combined,
         )
+
+    def install_single_no_deps(self, package_spec: str, timeout: int = 60) -> InstallResult:
+        """Install one package with --no-deps, bypassing the resolver.
+
+        Used as a last-resort for packages that cannot be reconciled with the
+        rest of the requirements set. Returns an InstallResult like install_from_file.
+        """
+        env = {**os.environ, "PIP_NO_COLOR": "1", "PIP_DISABLE_PIP_VERSION_CHECK": "1"}
+        logger.info("Force-installing (--no-deps): %s", package_spec)
+        try:
+            result = subprocess.run(
+                [str(self.pip_path), "install", "--no-deps", package_spec],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=env,
+            )
+            combined = f"=== pip install --no-deps {package_spec} stdout ===\n{result.stdout}\n\n=== stderr ===\n{result.stderr}"
+            success = result.returncode == 0
+            if success:
+                logger.info("Force-install succeeded: %s", package_spec)
+            else:
+                logger.warning("Force-install failed (exit %d): %s", result.returncode, package_spec)
+            return InstallResult(
+                success=success,
+                returncode=result.returncode,
+                stdout=result.stdout,
+                stderr=result.stderr,
+                combined_output=combined,
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning("Force-install timed out after %ds: %s", timeout, package_spec)
+            return InstallResult(success=False, returncode=-1, stdout="", stderr="timeout", combined_output=f"TIMEOUT: {package_spec}")
+        except Exception as exc:
+            logger.error("Force-install error for %s: %s", package_spec, exc)
+            return InstallResult(success=False, returncode=-1, stdout="", stderr=str(exc), combined_output=f"ERROR: {exc}")
+
+    def run_pip_check(self) -> str:
+        """Run `pip check` and return combined output.
+
+        pip check scans installed metadata and reports unmet dependencies
+        without re-running the resolver.
+        """
+        env = {**os.environ, "PIP_NO_COLOR": "1", "PIP_DISABLE_PIP_VERSION_CHECK": "1"}
+        try:
+            result = subprocess.run(
+                [str(self.pip_path), "check"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env=env,
+            )
+            output = (result.stdout + result.stderr).strip()
+            if result.returncode == 0:
+                logger.info("pip check: no broken dependencies")
+            else:
+                logger.warning("pip check: found dependency issues")
+                for line in output.splitlines():
+                    logger.warning("  %s", line)
+            return output or "No issues found."
+        except Exception as exc:
+            logger.warning("pip check failed: %s", exc)
+            return f"pip check could not run: {exc}"
 
     def destroy(self) -> None:
         if hasattr(self, "_tmpdir") and Path(self._tmpdir).exists():

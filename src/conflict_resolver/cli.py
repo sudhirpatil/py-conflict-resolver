@@ -185,7 +185,7 @@ def main() -> None:
     final_state: ResolverState | None = None
     try:
         with VenvManager(python=args.python) as vm:
-            graph = build_graph(llm, vm, config.agent.max_loops, config.agent.pip_timeout)
+            graph = build_graph(llm, vm, config.agent.max_loops, config.agent.pip_timeout, config.agent.pypi_lookup_enabled)
 
             initial_state: ResolverState = {
                 "original_requirements_path": str(requirements_path),
@@ -194,10 +194,14 @@ def main() -> None:
                 "attempt_count": 0,
                 "last_install_success": False,
                 "last_pip_output": "",
+                "last_dry_run_output": "",
                 "failed_attempts": [],
                 "messages": [],
                 "resolved_requirements": None,
                 "error_message": None,
+                "pypi_versions": {},
+                "pypi_requires_dist": {},
+                "partial_install_result": None,
             }
 
             logger.info("Starting conflict-resolution agent loop…")

@@ -5,6 +5,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>py-conflict-resolver</title>
+  <script src="/static/mermaid.min.js"></script>
   <style>
     *,
     *::before,
@@ -390,6 +391,35 @@
       font-size: 0.85rem;
       line-height: 1.7;
     }
+
+    /* Graph card */
+    #graph-card .mermaid {
+      display: flex;
+      justify-content: center;
+    }
+
+    #graph-card .mermaid svg {
+      max-width: 100%;
+      height: auto;
+    }
+
+    .graph-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem 1.4rem;
+      margin-top: 1rem;
+      font-size: 0.78rem;
+      color: #6b7280;
+    }
+
+    .legend-dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 3px;
+      margin-right: 4px;
+      vertical-align: middle;
+    }
   </style>
 </head>
 
@@ -407,6 +437,12 @@
       <p class="upload-label">Drop your <span>requirements.txt</span> here, or click to browse</p>
       <p id="file-name"></p>
     </div>
+    <div id="python-version-row" style="margin-bottom:0.65rem">
+      <label style="font-size:0.82rem;color:#374151;font-weight:500;display:block;margin-bottom:0.3rem">Python Version</label>
+      <div id="version-buttons" style="display:flex;gap:0.5rem;flex-wrap:wrap"></div>
+      <p id="version-warning" style="font-size:0.78rem;color:#d97706;margin-top:0.35rem;display:none"></p>
+      <p id="version-install-hint" style="font-size:0.76rem;color:#6b7280;font-family:'JetBrains Mono','Fira Code',monospace;margin-top:0.2rem;display:none"></p>
+    </div>
     <button class="btn btn-primary" id="run-btn" disabled>Run Conflict Resolver</button>
   </div>
 
@@ -423,11 +459,81 @@
     <div id="result-content"></div>
   </div>
 
+  <!-- Forced resolution fallback card -->
+  <div class="card" id="partial-install-card" style="display:none;border-color:#f59e0b">
+    <h2 style="color:#b45309">Last-Resort: Forced Partial Installation</h2>
+    <p style="font-size:0.85rem;color:#92400e;margin-bottom:1rem;line-height:1.6">
+      Automatic conflict resolution exhausted all attempts without finding a fully compatible
+      set of versions. As a last resort, the agent split your packages into two groups:
+      <strong>compatible packages</strong> (installed normally) and <strong>conflicting packages</strong>
+      (force-installed with <code>--no-deps</code>, bypassing the resolver).
+      <br><br>
+      <strong>Use with caution</strong> — the environment may fail at runtime if force-installed
+      packages have incompatible runtime requirements. Review the pip check output and test thoroughly.
+    </p>
+    <div id="partial-install-content"></div>
+  </div>
+
   <!-- Manual fix recommendations card -->
   <div class="card" id="manual-card" style="display:none">
     <h2>Manual Fix Recommendations</h2>
     <div id="manual-content"></div>
   </div>
+
+  <!-- Agent graph card -->
+  <div class="card" id="graph-card">
+    <h2>Agent Resolution Graph</h2>
+    <div class="mermaid">
+%%{init: {
+  "theme": "base",
+  "themeVariables": {
+    "primaryColor": "#ede9fe",
+    "primaryTextColor": "#3b0764",
+    "primaryBorderColor": "#7c3aed",
+    "lineColor": "#7c3aed",
+    "secondaryColor": "#dbeafe",
+    "tertiaryColor": "#f3f4f6",
+    "edgeLabelBackground": "#f9fafb",
+    "fontSize": "14px"
+  },
+  "flowchart": { "curve": "basis", "htmlLabels": true }
+}}%%
+flowchart TD
+    S(["▶ START"]):::terminal --> install
+    install["📦 install\npip install -r requirements.txt"]:::node
+    pypi_lookup["🔍 pypi_lookup\nFetch real versions from PyPI"]:::node
+    analyze["🤖 analyze\nLLM identifies conflicts"]:::node
+    fix["🔧 fix\nApply tool calls to requirements"]:::node
+    finish["🏁 finish\nLog success or failure"]:::node
+    partition["✂️ partition\nLLM splits into compatible vs conflicting"]:::fallback
+    install_compatible["📦 install_compatible\npip install compatible group"]:::fallback
+    install_forced["⚠️ install_forced\npip install --no-deps conflicting"]:::fallback
+    pip_check["🔎 pip_check\npip check unmet deps"]:::fallback
+    E(["⏹ END"]):::terminal
+
+    install -->|"✓ success"| finish
+    install -->|"✗ failed &amp;\nattempts remaining"| pypi_lookup
+    install -->|"✗ max loops\nexhausted"| partition
+    pypi_lookup --> analyze
+    analyze --> fix
+    fix --> install
+    partition --> install_compatible --> install_forced --> pip_check --> finish
+    finish --> E
+
+    classDef terminal fill:#f5f3ff,stroke:#7c3aed,color:#6d28d9,font-weight:600
+    classDef node fill:#ffffff,stroke:#d1d5db,color:#111827
+    classDef fallback fill:#fffbeb,stroke:#f59e0b,color:#92400e
+    </div>
+    <div class="graph-legend">
+      <span><span class="legend-dot" style="background:#f5f3ff;border:1.5px solid #7c3aed"></span>Start / End</span>
+      <span><span class="legend-dot" style="background:#ffffff;border:1.5px solid #d1d5db"></span>Agent node</span>
+      <span style="color:#7c3aed">→ fixed edge &nbsp; ⇢ conditional edge</span>
+    </div>
+  </div>
+
+  <script>
+    mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' });
+  </script>
 
   <script>
     // ── File upload ──────────────────────────────────────────────────────────
@@ -546,6 +652,129 @@
       }
 
       showManualFix(data.manual_fix || "{}");
+      if (data.partial_install) showPartialInstall(data.partial_install);
+    }
+
+    function showPartialInstall(rawJson) {
+      let partial;
+      try { partial = JSON.parse(rawJson); } catch (_) { return; }
+      if (!partial || (!partial.compatible && !partial.conflicting)) return;
+
+      // Render into a dedicated card, not the result card
+      const partialCard = document.getElementById("partial-install-card");
+      const partialEl = document.getElementById("partial-install-content");
+      partialCard.style.display = "block";
+
+      // Build script content first (needed for both display and download)
+      const pipCmds = partial.pip_commands || [];
+      const scriptLines = [
+        "#!/usr/bin/env bash",
+        "# additional_script.sh",
+        "# Force-installs conflicting packages that cannot be resolved automatically.",
+        "# These packages bypass the pip dependency resolver (--no-deps).",
+        "#",
+        "# WARNING: The environment may behave incorrectly at runtime if the",
+        "# force-installed packages have incompatible runtime requirements.",
+        "# Run 'pip check' after executing this script to see unmet dependencies.",
+        "",
+        ...pipCmds,
+        "",
+        "echo ''",
+        "echo 'Verifying environment integrity...'",
+        "pip check",
+      ];
+      const scriptContent = scriptLines.join("\n");
+
+      let html = "";
+
+      // Why unresolvable
+      if (partial.reason) {
+        html += `<p class="section-label">Why Automatic Resolution Failed</p>
+                 <div class="warn-box">${escHtml(partial.reason)}</div>`;
+      }
+
+      // Diff: original requirements.txt vs compatible-only requirements.txt
+      if (partial.original_requirements && partial.compatible_requirements) {
+        const origLines = partial.original_requirements.split("\n");
+        const compatLines = partial.compatible_requirements.split("\n");
+        const diff = computeDiff(origLines, compatLines);
+        html += `<p class="section-label">Requirements Changes — Original vs Compatible-Only</p>`;
+        html += `<p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.4rem">
+          Packages removed from requirements.txt are the ones force-installed separately via the script below.
+        </p>`;
+        html += `<div class="diff-box">${renderDiff(diff)}</div>`;
+      }
+
+      // Script content display
+      if (pipCmds.length) {
+        html += `<p class="section-label">additional_script.sh — Force-Install Commands</p>`;
+        html += `<p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.4rem">
+          Run this script after your normal <code>pip install -r requirements.compatible.txt</code>
+          to install the conflicting packages without dependency resolution.
+        </p>`;
+        html += `<div class="text-box" style="color:#92400e">${escHtml(scriptContent)}</div>`;
+      }
+
+      // pip check output
+      if (partial.pip_check_output) {
+        const isClean = /no (issues|broken)/i.test(partial.pip_check_output);
+        html += `<p class="section-label">pip check — Environment Integrity</p>`;
+        html += `<div class="text-box" style="color:${isClean ? "#065f46" : "#d97706"}">${escHtml(partial.pip_check_output)}</div>`;
+      }
+
+      // Download buttons row
+      html += `<div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:1rem">`;
+
+      // Download modified requirements.txt (compatible only)
+      if (partial.compatible_requirements) {
+        const reqContent = [
+          "# requirements.compatible.txt",
+          "# Packages that can be installed normally (no conflicts).",
+          "# Use with: pip install -r requirements.compatible.txt",
+          "# Then run additional_script.sh to install force-installed packages.",
+          "",
+          partial.compatible_requirements,
+        ].join("\n");
+        const reqBlob = new Blob([reqContent], { type: "text/plain" });
+        const reqUrl = URL.createObjectURL(reqBlob);
+        html += `<a href="${reqUrl}" download="requirements.compatible.txt">
+                   <button class="download-btn">⬇ Download requirements.compatible.txt</button>
+                 </a>`;
+      }
+
+      // Download additional_script.sh
+      if (pipCmds.length) {
+        const scriptBlob = new Blob([scriptContent], { type: "text/plain" });
+        const scriptUrl = URL.createObjectURL(scriptBlob);
+        html += `<a href="${scriptUrl}" download="additional_script.sh">
+                   <button class="download-btn" style="background:#fef3c7;color:#92400e;border-color:#fcd34d">
+                     ⬇ Download additional_script.sh
+                   </button>
+                 </a>`;
+      }
+
+      html += `</div>`;
+
+      partialEl.innerHTML = html;
+    }
+
+    // Minimal diff for two string arrays — output compatible with renderDiff()
+    function computeDiff(origLines, newLines) {
+      const origSet = new Set(origLines.map(l => l.trim()).filter(l => l && !l.startsWith("#")));
+      const newSet  = new Set(newLines.map(l => l.trim()).filter(l => l && !l.startsWith("#")));
+      const lines = [];
+      for (const l of origLines) {
+        const t = l.trim();
+        if (!t || t.startsWith("#")) continue;
+        if (!newSet.has(t)) lines.push(`-${l}`);  // removed (force-installed separately)
+        else lines.push(` ${l}`);                  // unchanged
+      }
+      for (const l of newLines) {
+        const t = l.trim();
+        if (!t || t.startsWith("#")) continue;
+        if (!origSet.has(t)) lines.push(`+${l}`);  // newly added (shouldn't happen but safe)
+      }
+      return lines.join("\n");
     }
 
     function showManualFix(rawJson) {
@@ -583,6 +812,63 @@
       manualEl.innerHTML = html || `<p style="color:#6b7280">No recommendations available.</p>`;
     }
 
+    // ── Python version selector ──────────────────────────────────────────────
+    const VERSIONS = ["3.6", "3.10", "3.11"];
+    const INSTALL_CMDS = { "3.6": "3.6.15", "3.10": "3.10.17", "3.11": "3.11.12" };
+    let selectedVersion = "3.11";
+    let availableVersions = {};
+
+    function selectVersion(ver) {
+      selectedVersion = ver;
+      document.querySelectorAll("#version-buttons button").forEach(b => {
+        const active = b.dataset.ver === ver;
+        b.style.background = active ? "linear-gradient(135deg,#7c3aed,#4f46e5)" : "#f9fafb";
+        b.style.color = active ? "#fff" : "#374151";
+        b.style.borderColor = active ? "#7c3aed" : "#d1d5db";
+      });
+      const info = availableVersions[ver];
+      const warning = document.getElementById("version-warning");
+      const hint = document.getElementById("version-install-hint");
+      if (info && info.available === false) {
+        warning.textContent = `Python ${ver} is not available on this machine.`;
+        warning.style.display = "block";
+        hint.textContent = `pyenv install ${INSTALL_CMDS[ver]}  # won't change your default Python`;
+        hint.style.display = "block";
+      } else {
+        warning.style.display = "none";
+        hint.style.display = "none";
+      }
+    }
+
+    function renderVersionSelector() {
+      const container = document.getElementById("version-buttons");
+      container.innerHTML = "";
+      for (const ver of VERSIONS) {
+        const info = availableVersions[ver];
+        const unavailable = info && info.available === false;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.dataset.ver = ver;
+        btn.textContent = `Python ${ver}${unavailable ? " ⚠" : ""}`;
+        btn.title = info ? (info.available ? info.version : `Not found — ${info.path || "not on PATH"}`) : "";
+        btn.style.cssText = "padding:0.3rem 0.85rem;border-radius:99px;font-size:0.82rem;" +
+          "font-weight:600;cursor:pointer;border:1.5px solid;transition:all 0.15s;background:#f9fafb;" +
+          "color:#374151;border-color:#d1d5db";
+        btn.addEventListener("click", () => selectVersion(ver));
+        container.appendChild(btn);
+      }
+      selectVersion(selectedVersion);
+    }
+
+    async function loadPythonVersions() {
+      try {
+        const resp = await fetch("/python-versions");
+        availableVersions = await resp.json();
+      } catch (_) { }
+      renderVersionSelector();
+    }
+    loadPythonVersions();
+
     runBtn.addEventListener("click", async () => {
       const file = fileInput.files[0];
       if (!file) return;
@@ -592,6 +878,8 @@
       resultEl.innerHTML = "";
       document.getElementById("manual-content").innerHTML = "";
       document.getElementById("manual-card").style.display = "none";
+      document.getElementById("partial-install-content").innerHTML = "";
+      document.getElementById("partial-install-card").style.display = "none";
       logCard.style.display = "block";
       resultCard.style.display = "none";
       logTitle.innerHTML = `<span class="spinner" id="spinner"></span> Agent running…`;
@@ -599,6 +887,7 @@
 
       const form = new FormData();
       form.append("file", file);
+      form.append("python_version", selectedVersion);
 
       const resp = await fetch("/resolve", { method: "POST", body: form });
       const reader = resp.body.getReader();
