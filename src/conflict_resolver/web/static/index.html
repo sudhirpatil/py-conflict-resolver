@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>py-conflict-resolver</title>
+  <script src="/static/mermaid.min.js"></script>
+  <style>
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #f3f4f6;
+      color: #111827;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem;
+    }
+
+    h1 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: #6d28d9;
+      margin-bottom: 0.25rem;
+      letter-spacing: -0.5px;
+    }
+
+    .subtitle {
+      color: #6b7280;
+      font-size: 0.9rem;
+      margin-bottom: 2rem;
+    }
+
+    .card {
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      padding: 1.75rem;
+      width: 100%;
+      max-width: 820px;
+      margin-bottom: 1.5rem;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+    }
+
+    .card h2 {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #7c3aed;
+      margin-bottom: 1.1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+
+    label {
+      font-size: 0.82rem;
+      color: #374151;
+      font-weight: 500;
+    }
+
+    select,
+    input[type="text"],
+    input[type="number"] {
+      background: #f9fafb;
+      border: 1px solid #d1d5db;
+      border-radius: 7px;
+      color: #111827;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.9rem;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    select:focus,
+    input:focus {
+      border-color: #7c3aed;
+    }
+
+    .upload-area {
+      border: 2px dashed #d1d5db;
+      border-radius: 10px;
+      padding: 1.8rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      margin-bottom: 1rem;
+      position: relative;
+    }
+
+    .upload-area:hover,
+    .upload-area.drag-over {
+      border-color: #7c3aed;
+      background: #f5f3ff;
+    }
+
+    .upload-area input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    .upload-icon {
+      font-size: 2rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .upload-label {
+      color: #6b7280;
+      font-size: 0.9rem;
+    }
+
+    .upload-label span {
+      color: #7c3aed;
+    }
+
+    #file-name {
+      margin-top: 0.5rem;
+      font-size: 0.82rem;
+      color: #059669;
+      min-height: 1.1em;
+    }
+
+    .btn {
+      width: 100%;
+      padding: 0.75rem;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+
+    .btn:active {
+      transform: scale(0.98);
+    }
+
+    .btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #7c3aed, #4f46e5);
+      color: #fff;
+    }
+
+    /* Upload card — compact */
+    #upload-card {
+      padding: 1rem 1.75rem;
+    }
+
+    #upload-card .upload-area {
+      padding: 0.7rem 1rem;
+      margin-bottom: 0.65rem;
+    }
+
+    #upload-card .upload-icon {
+      font-size: 1.2rem;
+      margin-bottom: 0.15rem;
+    }
+
+    #upload-card .upload-label {
+      font-size: 0.85rem;
+    }
+
+    #upload-card #file-name {
+      margin-top: 0.2rem;
+    }
+
+    #upload-card .btn {
+      padding: 0.55rem;
+      font-size: 0.92rem;
+    }
+
+    /* Logs */
+    #log-card {
+      display: none;
+    }
+
+    .log-box {
+      background: #f8fafc;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 1rem;
+      height: 320px;
+      overflow-y: auto;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 0.78rem;
+      line-height: 1.55;
+      scroll-behavior: smooth;
+    }
+
+    .log-line {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .log-INFO {
+      color: #9ca3af;
+    }
+
+    .log-DEBUG {
+      color: #d1d5db;
+      opacity: 0.5;
+    }
+
+    .log-WARNING {
+      color: #d97706;
+    }
+
+    .log-ERROR {
+      color: #dc2626;
+    }
+
+    .log-pip {
+      color: #9ca3af;
+      opacity: 0.6;
+    }
+
+    /* Logs from conflict_resolver — prominent blue */
+    .log-agent {
+      color: sandybrown;
+      font-weight: 400;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid #7c3aed;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    /* Result */
+    #result-card {
+      display: none;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 0.2rem 0.7rem;
+      border-radius: 99px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+    }
+
+    .badge-success {
+      background: #d1fae5;
+      color: #065f46;
+    }
+
+    .badge-fail {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .section-label {
+      font-size: 0.78rem;
+      color: #6b7280;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin: 1rem 0 0.4rem;
+    }
+
+    .diff-box,
+    .text-box {
+      background: #f8fafc;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 0.85rem 1rem;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 0.78rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-x: auto;
+      max-height: 360px;
+      overflow-y: auto;
+      line-height: 1.55;
+    }
+
+    .diff-add {
+      color: #065f46;
+    }
+
+    .diff-rem {
+      color: #dc2626;
+    }
+
+    .diff-hdr {
+      color: #2563eb;
+    }
+
+    .diff-meta {
+      color: #9ca3af;
+    }
+
+    .download-btn {
+      margin-top: 1rem;
+      background: #d1fae5;
+      color: #065f46;
+      border: 1px solid #6ee7b7;
+      border-radius: 7px;
+      padding: 0.5rem 1.1rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .download-btn:hover {
+      background: #a7f3d0;
+    }
+
+    /* Manual fix card */
+    .info-box {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 8px;
+      padding: 0.85rem 1rem;
+      font-size: 0.85rem;
+      color: #1e40af;
+      margin-bottom: 0.75rem;
+      line-height: 1.6;
+    }
+
+    .warn-box {
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      border-radius: 8px;
+      padding: 0.85rem 1rem;
+      font-size: 0.85rem;
+      color: #92400e;
+      margin-bottom: 0.75rem;
+      line-height: 1.6;
+    }
+
+    .rec-block {
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 1rem 1.1rem;
+      margin-bottom: 0.85rem;
+      background: #f9fafb;
+    }
+
+    .rec-title {
+      font-weight: 600;
+      color: #1f2937;
+      margin-bottom: 0.5rem;
+      font-size: 0.9rem;
+    }
+
+    .rec-steps {
+      margin: 0;
+      padding-left: 1.3rem;
+      color: #374151;
+      font-size: 0.85rem;
+      line-height: 1.7;
+    }
+
+    /* Graph card */
+    #graph-card .mermaid {
+      display: flex;
+      justify-content: center;
+    }
+
+    #graph-card .mermaid svg {
+      max-width: 100%;
+      height: auto;
+    }
+
+    .graph-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem 1.4rem;
+      margin-top: 1rem;
+      font-size: 0.78rem;
+      color: #6b7280;
+    }
+
+    .legend-dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 3px;
+      margin-right: 4px;
+      vertical-align: middle;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h1>py-conflict-resolver</h1>
+  <p class="subtitle">Resolve Python package version conflicts with an LLM agent</p>
+
+  <!-- Upload card -->
+  <div class="card" id="upload-card">
+    <!-- <h2>Upload requirements.txt</h2> -->
+    <div class="upload-area" id="upload-area">
+      <input type="file" id="file-input" accept=".txt" />
+      <div class="upload-icon">📄</div>
+      <p class="upload-label">Drop your <span>requirements.txt</span> here, or click to browse</p>
+      <p id="file-name"></p>
+    </div>
+    <div id="python-version-row" style="margin-bottom:0.65rem">
+      <label style="font-size:0.82rem;color:#374151;font-weight:500;display:block;margin-bottom:0.3rem">Python Version</label>
+      <div id="version-buttons" style="display:flex;gap:0.5rem;flex-wrap:wrap"></div>
+      <p id="version-warning" style="font-size:0.78rem;color:#d97706;margin-top:0.35rem;display:none"></p>
+      <p id="version-install-hint" style="font-size:0.76rem;color:#6b7280;font-family:'JetBrains Mono','Fira Code',monospace;margin-top:0.2rem;display:none"></p>
+    </div>
+    <button class="btn btn-primary" id="run-btn" disabled>Run Conflict Resolver</button>
+  </div>
+
+  <!-- Logs card -->
+  <div class="card" id="log-card">
+    <h2>Agent Logs</h2>
+    <h2 id="log-title"><span class="spinner" id="spinner"></span> Agent running…</h2>
+    <div class="log-box" id="log-box"></div>
+  </div>
+
+  <!-- Result card -->
+  <div class="card" id="result-card">
+    <h2>Result</h2>
+    <div id="result-content"></div>
+  </div>
+
+  <!-- Forced resolution fallback card -->
+  <div class="card" id="partial-install-card" style="display:none;border-color:#f59e0b">
+    <h2 style="color:#b45309">Last-Resort: Forced Partial Installation</h2>
+    <p style="font-size:0.85rem;color:#92400e;margin-bottom:1rem;line-height:1.6">
+      Automatic conflict resolution exhausted all attempts without finding a fully compatible
+      set of versions. As a last resort, the agent split your packages into two groups:
+      <strong>compatible packages</strong> (installed normally) and <strong>conflicting packages</strong>
+      (force-installed with <code>--no-deps</code>, bypassing the resolver).
+      <br><br>
+      <strong>Use with caution</strong> — the environment may fail at runtime if force-installed
+      packages have incompatible runtime requirements. Review the pip check output and test thoroughly.
+    </p>
+    <div id="partial-install-content"></div>
+  </div>
+
+  <!-- Manual fix recommendations card -->
+  <div class="card" id="manual-card" style="display:none">
+    <h2>Manual Fix Recommendations</h2>
+    <div id="manual-content"></div>
+  </div>
+
+  <!-- Agent graph card -->
+  <div class="card" id="graph-card">
+    <h2>Agent Resolution Graph</h2>
+    <div class="mermaid">
+%%{init: {
+  "theme": "base",
+  "themeVariables": {
+    "primaryColor": "#ede9fe",
+    "primaryTextColor": "#3b0764",
+    "primaryBorderColor": "#7c3aed",
+    "lineColor": "#7c3aed",
+    "secondaryColor": "#dbeafe",
+    "tertiaryColor": "#f3f4f6",
+    "edgeLabelBackground": "#f9fafb",
+    "fontSize": "14px"
+  },
+  "flowchart": { "curve": "basis", "htmlLabels": true }
+}}%%
+flowchart TD
+    S(["▶ START"]):::terminal --> install
+    install["📦 install\npip install -r requirements.txt"]:::node
+    pypi_lookup["🔍 pypi_lookup\nFetch real versions from PyPI"]:::node
+    analyze["🤖 analyze\nLLM identifies conflicts"]:::node
+    fix["🔧 fix\nApply tool calls to requirements"]:::node
+    finish["🏁 finish\nLog success or failure"]:::node
+    partition["✂️ partition\nLLM splits into compatible vs conflicting"]:::fallback
+    install_compatible["📦 install_compatible\npip install compatible group"]:::fallback
+    install_forced["⚠️ install_forced\npip install --no-deps conflicting"]:::fallback
+    pip_check["🔎 pip_check\npip check unmet deps"]:::fallback
+    E(["⏹ END"]):::terminal
+
+    install -->|"✓ success"| finish
+    install -->|"✗ failed &amp;\nattempts remaining"| pypi_lookup
+    install -->|"✗ max loops\nexhausted"| partition
+    pypi_lookup --> analyze
+    analyze --> fix
+    fix --> install
+    partition --> install_compatible --> install_forced --> pip_check --> finish
+    finish --> E
+
+    classDef terminal fill:#f5f3ff,stroke:#7c3aed,color:#6d28d9,font-weight:600
+    classDef node fill:#ffffff,stroke:#d1d5db,color:#111827
+    classDef fallback fill:#fffbeb,stroke:#f59e0b,color:#92400e
+    </div>
+    <div class="graph-legend">
+      <span><span class="legend-dot" style="background:#f5f3ff;border:1.5px solid #7c3aed"></span>Start / End</span>
+      <span><span class="legend-dot" style="background:#ffffff;border:1.5px solid #d1d5db"></span>Agent node</span>
+      <span style="color:#7c3aed">→ fixed edge &nbsp; ⇢ conditional edge</span>
+    </div>
+  </div>
+
+  <script>
+    mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' });
+  </script>
+
+  <script>
+    // ── File upload ──────────────────────────────────────────────────────────
+    const fileInput = document.getElementById("file-input");
+    const uploadArea = document.getElementById("upload-area");
+    const fileNameEl = document.getElementById("file-name");
+    const runBtn = document.getElementById("run-btn");
+
+    fileInput.addEventListener("change", () => {
+      const f = fileInput.files[0];
+      if (f) {
+        fileNameEl.textContent = `✓ ${f.name}`;
+        runBtn.disabled = false;
+      }
+    });
+
+    uploadArea.addEventListener("dragover", e => { e.preventDefault(); uploadArea.classList.add("drag-over"); });
+    uploadArea.addEventListener("dragleave", () => uploadArea.classList.remove("drag-over"));
+    uploadArea.addEventListener("drop", e => {
+      e.preventDefault();
+      uploadArea.classList.remove("drag-over");
+      const f = e.dataTransfer.files[0];
+      if (f) {
+        const dt = new DataTransfer();
+        dt.items.add(f);
+        fileInput.files = dt.files;
+        fileNameEl.textContent = `✓ ${f.name}`;
+        runBtn.disabled = false;
+      }
+    });
+
+    // ── Run ──────────────────────────────────────────────────────────────────
+    const logCard = document.getElementById("log-card");
+    const logBox = document.getElementById("log-box");
+    const logTitle = document.getElementById("log-title");
+    const spinner = document.getElementById("spinner");
+    const resultCard = document.getElementById("result-card");
+    const resultEl = document.getElementById("result-content");
+
+    function logClass(text) {
+      if (text.startsWith("pip:")) return "log-pip";
+      if (text.includes("conflict_resolver")) return "log-agent";
+      if (text.startsWith("DEBUG")) return "log-DEBUG";
+      if (text.startsWith("WARNING")) return "log-WARNING";
+      if (text.startsWith("ERROR")) return "log-ERROR";
+      return "log-INFO";
+    }
+
+    function appendLog(text) {
+      const div = document.createElement("div");
+      div.className = `log-line ${logClass(text)}`;
+      div.textContent = text;
+      logBox.appendChild(div);
+      logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    function renderDiff(diffText) {
+      if (!diffText.trim()) return '<span style="color:#6b7280">(no changes)</span>';
+      return diffText.split("\n").map(line => {
+        if (line.startsWith("+") && !line.startsWith("+++"))
+          return `<span class="diff-add">${escHtml(line)}</span>`;
+        if (line.startsWith("-") && !line.startsWith("---"))
+          return `<span class="diff-rem">${escHtml(line)}</span>`;
+        if (line.startsWith("@@"))
+          return `<span class="diff-hdr">${escHtml(line)}</span>`;
+        if (line.startsWith("---") || line.startsWith("+++"))
+          return `<span class="diff-meta">${escHtml(line)}</span>`;
+        return `<span>${escHtml(line)}</span>`;
+      }).join("\n");
+    }
+
+    function escHtml(s) {
+      return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function showResult(data) {
+      spinner.style.display = "none";
+      resultCard.style.display = "block";
+
+      if (data.success) {
+        logTitle.innerHTML = "✅ Conflict resolved";
+
+        let html = `<span class="badge badge-success">✓ Resolved</span>`;
+
+        html += `<p class="section-label">Diff — original vs resolved</p>`;
+        html += `<div class="diff-box">${renderDiff(data.diff)}</div>`;
+
+        html += `<p class="section-label">Resolved requirements.txt</p>`;
+        html += `<div class="text-box">${escHtml(data.resolved)}</div>`;
+
+        const blob = new Blob([data.resolved], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+        html += `<a href="${url}" download="requirements.resolved.txt">
+                   <button class="download-btn">⬇ Download requirements.resolved.txt</button>
+                 </a>`;
+
+        resultEl.innerHTML = html;
+
+      } else {
+        logTitle.innerHTML = "❌ Could not resolve conflicts";
+
+        let html = `<span class="badge badge-fail">✗ Failed</span>`;
+        html += `<p style="color:#dc2626;margin-bottom:0.75rem">${escHtml(data.error_message)}</p>`;
+
+        if (data.last_pip_errors) {
+          html += `<p class="section-label">Last pip errors</p>`;
+          html += `<div class="text-box" style="color:#dc2626">${escHtml(data.last_pip_errors)}</div>`;
+        }
+
+        if (data.attempts_summary) {
+          html += `<p class="section-label">Changes tried per attempt</p>`;
+          html += `<div class="text-box">${escHtml(data.attempts_summary)}</div>`;
+        }
+
+        resultEl.innerHTML = html;
+      }
+
+      showManualFix(data.manual_fix || "{}");
+      if (data.partial_install) showPartialInstall(data.partial_install);
+    }
+
+    function showPartialInstall(rawJson) {
+      let partial;
+      try { partial = JSON.parse(rawJson); } catch (_) { return; }
+      if (!partial || (!partial.compatible && !partial.conflicting)) return;
+
+      // Render into a dedicated card, not the result card
+      const partialCard = document.getElementById("partial-install-card");
+      const partialEl = document.getElementById("partial-install-content");
+      partialCard.style.display = "block";
+
+      // Build script content first (needed for both display and download)
+      const pipCmds = partial.pip_commands || [];
+      const scriptLines = [
+        "#!/usr/bin/env bash",
+        "# additional_script.sh",
+        "# Force-installs conflicting packages that cannot be resolved automatically.",
+        "# These packages bypass the pip dependency resolver (--no-deps).",
+        "#",
+        "# WARNING: The environment may behave incorrectly at runtime if the",
+        "# force-installed packages have incompatible runtime requirements.",
+        "# Run 'pip check' after executing this script to see unmet dependencies.",
+        "",
+        ...pipCmds,
+        "",
+        "echo ''",
+        "echo 'Verifying environment integrity...'",
+        "pip check",
+      ];
+      const scriptContent = scriptLines.join("\n");
+
+      let html = "";
+
+      // Why unresolvable
+      if (partial.reason) {
+        html += `<p class="section-label">Why Automatic Resolution Failed</p>
+                 <div class="warn-box">${escHtml(partial.reason)}</div>`;
+      }
+
+      // Diff: original requirements.txt vs compatible-only requirements.txt
+      if (partial.original_requirements && partial.compatible_requirements) {
+        const origLines = partial.original_requirements.split("\n");
+        const compatLines = partial.compatible_requirements.split("\n");
+        const diff = computeDiff(origLines, compatLines);
+        html += `<p class="section-label">Requirements Changes — Original vs Compatible-Only</p>`;
+        html += `<p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.4rem">
+          Packages removed from requirements.txt are the ones force-installed separately via the script below.
+        </p>`;
+        html += `<div class="diff-box">${renderDiff(diff)}</div>`;
+      }
+
+      // Script content display
+      if (pipCmds.length) {
+        html += `<p class="section-label">additional_script.sh — Force-Install Commands</p>`;
+        html += `<p style="font-size:0.78rem;color:#6b7280;margin-bottom:0.4rem">
+          Run this script after your normal <code>pip install -r requirements.compatible.txt</code>
+          to install the conflicting packages without dependency resolution.
+        </p>`;
+        html += `<div class="text-box" style="color:#92400e">${escHtml(scriptContent)}</div>`;
+      }
+
+      // pip check output
+      if (partial.pip_check_output) {
+        const isClean = /no (issues|broken)/i.test(partial.pip_check_output);
+        html += `<p class="section-label">pip check — Environment Integrity</p>`;
+        html += `<div class="text-box" style="color:${isClean ? "#065f46" : "#d97706"}">${escHtml(partial.pip_check_output)}</div>`;
+      }
+
+      // Download buttons row
+      html += `<div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:1rem">`;
+
+      // Download modified requirements.txt (compatible only)
+      if (partial.compatible_requirements) {
+        const reqContent = [
+          "# requirements.compatible.txt",
+          "# Packages that can be installed normally (no conflicts).",
+          "# Use with: pip install -r requirements.compatible.txt",
+          "# Then run additional_script.sh to install force-installed packages.",
+          "",
+          partial.compatible_requirements,
+        ].join("\n");
+        const reqBlob = new Blob([reqContent], { type: "text/plain" });
+        const reqUrl = URL.createObjectURL(reqBlob);
+        html += `<a href="${reqUrl}" download="requirements.compatible.txt">
+                   <button class="download-btn">⬇ Download requirements.compatible.txt</button>
+                 </a>`;
+      }
+
+      // Download additional_script.sh
+      if (pipCmds.length) {
+        const scriptBlob = new Blob([scriptContent], { type: "text/plain" });
+        const scriptUrl = URL.createObjectURL(scriptBlob);
+        html += `<a href="${scriptUrl}" download="additional_script.sh">
+                   <button class="download-btn" style="background:#fef3c7;color:#92400e;border-color:#fcd34d">
+                     ⬇ Download additional_script.sh
+                   </button>
+                 </a>`;
+      }
+
+      html += `</div>`;
+
+      partialEl.innerHTML = html;
+    }
+
+    // Minimal diff for two string arrays — output compatible with renderDiff()
+    function computeDiff(origLines, newLines) {
+      const origSet = new Set(origLines.map(l => l.trim()).filter(l => l && !l.startsWith("#")));
+      const newSet  = new Set(newLines.map(l => l.trim()).filter(l => l && !l.startsWith("#")));
+      const lines = [];
+      for (const l of origLines) {
+        const t = l.trim();
+        if (!t || t.startsWith("#")) continue;
+        if (!newSet.has(t)) lines.push(`-${l}`);  // removed (force-installed separately)
+        else lines.push(` ${l}`);                  // unchanged
+      }
+      for (const l of newLines) {
+        const t = l.trim();
+        if (!t || t.startsWith("#")) continue;
+        if (!origSet.has(t)) lines.push(`+${l}`);  // newly added (shouldn't happen but safe)
+      }
+      return lines.join("\n");
+    }
+
+    function showManualFix(rawJson) {
+      const manualCard = document.getElementById("manual-card");
+      const manualEl = document.getElementById("manual-content");
+      manualCard.style.display = "block";
+
+      let data;
+      try { data = JSON.parse(rawJson); } catch (_) {
+        manualEl.innerHTML = `<p style="color:#6b7280">No recommendations available.</p>`;
+        return;
+      }
+
+      let html = "";
+
+      if (data.issue_summary) {
+        html += `<p class="section-label">Issue Summary</p>
+                 <div class="info-box">${escHtml(data.issue_summary)}</div>`;
+      }
+      if (data.root_cause) {
+        html += `<p class="section-label">Root Cause</p>
+                 <div class="warn-box">${escHtml(data.root_cause)}</div>`;
+      }
+      if (data.recommendations && data.recommendations.length) {
+        html += `<p class="section-label">How to Fix Manually</p>`;
+        for (const rec of data.recommendations) {
+          const steps = (rec.steps || []).map(s => `<li>${escHtml(s)}</li>`).join("");
+          html += `<div class="rec-block">
+                     <div class="rec-title">${escHtml(rec.title)}</div>
+                     <ol class="rec-steps">${steps}</ol>
+                   </div>`;
+        }
+      }
+
+      manualEl.innerHTML = html || `<p style="color:#6b7280">No recommendations available.</p>`;
+    }
+
+    // ── Python version selector ──────────────────────────────────────────────
+    const VERSIONS = ["3.6", "3.10", "3.11"];
+    const INSTALL_CMDS = { "3.6": "3.6.15", "3.10": "3.10.17", "3.11": "3.11.12" };
+    let selectedVersion = "3.11";
+    let availableVersions = {};
+
+    function selectVersion(ver) {
+      selectedVersion = ver;
+      document.querySelectorAll("#version-buttons button").forEach(b => {
+        const active = b.dataset.ver === ver;
+        b.style.background = active ? "linear-gradient(135deg,#7c3aed,#4f46e5)" : "#f9fafb";
+        b.style.color = active ? "#fff" : "#374151";
+        b.style.borderColor = active ? "#7c3aed" : "#d1d5db";
+      });
+      const info = availableVersions[ver];
+      const warning = document.getElementById("version-warning");
+      const hint = document.getElementById("version-install-hint");
+      if (info && info.available === false) {
+        warning.textContent = `Python ${ver} is not available on this machine.`;
+        warning.style.display = "block";
+        hint.textContent = `pyenv install ${INSTALL_CMDS[ver]}  # won't change your default Python`;
+        hint.style.display = "block";
+      } else {
+        warning.style.display = "none";
+        hint.style.display = "none";
+      }
+    }
+
+    function renderVersionSelector() {
+      const container = document.getElementById("version-buttons");
+      container.innerHTML = "";
+      for (const ver of VERSIONS) {
+        const info = availableVersions[ver];
+        const unavailable = info && info.available === false;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.dataset.ver = ver;
+        btn.textContent = `Python ${ver}${unavailable ? " ⚠" : ""}`;
+        btn.title = info ? (info.available ? info.version : `Not found — ${info.path || "not on PATH"}`) : "";
+        btn.style.cssText = "padding:0.3rem 0.85rem;border-radius:99px;font-size:0.82rem;" +
+          "font-weight:600;cursor:pointer;border:1.5px solid;transition:all 0.15s;background:#f9fafb;" +
+          "color:#374151;border-color:#d1d5db";
+        btn.addEventListener("click", () => selectVersion(ver));
+        container.appendChild(btn);
+      }
+      selectVersion(selectedVersion);
+    }
+
+    async function loadPythonVersions() {
+      try {
+        const resp = await fetch("/python-versions");
+        availableVersions = await resp.json();
+      } catch (_) { }
+      renderVersionSelector();
+    }
+    loadPythonVersions();
+
+    runBtn.addEventListener("click", async () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+
+      // Reset UI
+      logBox.innerHTML = "";
+      resultEl.innerHTML = "";
+      document.getElementById("manual-content").innerHTML = "";
+      document.getElementById("manual-card").style.display = "none";
+      document.getElementById("partial-install-content").innerHTML = "";
+      document.getElementById("partial-install-card").style.display = "none";
+      logCard.style.display = "block";
+      resultCard.style.display = "none";
+      logTitle.innerHTML = `<span class="spinner" id="spinner"></span> Agent running…`;
+      runBtn.disabled = true;
+
+      const form = new FormData();
+      form.append("file", file);
+      form.append("python_version", selectedVersion);
+
+      const resp = await fetch("/resolve", { method: "POST", body: form });
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop(); // keep incomplete chunk
+
+        for (const part of parts) {
+          if (part.startsWith("event: done")) {
+            runBtn.disabled = false;
+            break;
+          }
+          if (part.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(part.slice(6));
+              if (data.type === "log") {
+                appendLog(data.text);
+              } else if (data.type === "result") {
+                showResult(data);
+                runBtn.disabled = false;
+              }
+            } catch (_) { }
+          }
+        }
+      }
+    });
+  </script>
+</body>
+
+</html>

@@ -1,0 +1,51 @@
+# Secrets
+.env
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Build / dist
+dist/
+build/
+*.egg-info/
+*.egg
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+conflict_resolver_venv_*/
+
+# Installer / pip
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Testing
+.tox/
+.nox/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Type checking
+.mypy_cache/
+.pyright/
+.ruff_cache/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Project outputs
+*.resolved.txt

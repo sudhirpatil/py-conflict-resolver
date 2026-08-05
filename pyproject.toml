@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "py-conflict-resolver"
+version = "0.1.0"
+description = "Resolve Python package version conflicts using LLM agents"
+requires-python = ">=3.11"
+dependencies = [
+    "langgraph>=0.2",
+    "langchain-core>=0.2",
+    "langchain-openai>=0.1",
+    "langchain-anthropic>=0.1",
+    "langchain-google-genai>=1.0",
+    "pydantic>=2.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+web = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "python-multipart>=0.0.9",
+    "aiofiles>=23.0",
+]
+
+[project.scripts]
+conflict-resolver = "conflict_resolver.cli:main"
+conflict-resolver-web = "conflict_resolver.web.app:run"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/conflict_resolver"]
