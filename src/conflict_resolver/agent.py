@@ -212,7 +212,16 @@ def make_install_node(venv_manager: VenvManager, pip_timeout: int):
             "attempt_count": attempt,
         }
         if result.success:
-            update["resolved_requirements"] = state["current_requirements"]
+            frozen = venv_manager.freeze()
+            if frozen:
+                update["resolved_requirements"] = "\n".join(frozen) + "\n"
+                logger.info(
+                    "Captured %d installed package(s) via pip freeze (includes transitive deps)",
+                    len(frozen),
+                )
+            else:
+                logger.warning("pip freeze returned no output — using top-level requirements only")
+                update["resolved_requirements"] = state["current_requirements"]
 
         return update
 

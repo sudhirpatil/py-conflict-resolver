@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -42,6 +43,7 @@ class VenvManager:
         self._python = python  # None means use the current interpreter
         self._line_callback = line_callback  # Callable[[str], None] | None
         self._created = False
+        self._bootstrap_packages: set[str] = set()
 
     def __enter__(self) -> "VenvManager":
         self.create()
@@ -80,8 +82,36 @@ class VenvManager:
         if build_result.returncode != 0:
             logger.warning("Failed to install build tools: %s", build_result.stderr.strip())
 
+        # Snapshot the bootstrap package set (pip/setuptools/wheel and whatever
+        # they pull in, e.g. packaging) so freeze() can exclude it later — these
+        # aren't dependencies of whatever requirements get installed afterward.
+        self._bootstrap_packages = self._installed_names()
+
         self._created = True
         logger.debug("Virtual environment created")
+
+    def _installed_names(self, timeout: int = 30) -> set[str]:
+        """Return the lowercase names of all packages currently installed via `pip freeze`."""
+        env = {**os.environ, "PIP_NO_COLOR": "1", "PIP_DISABLE_PIP_VERSION_CHECK": "1"}
+        try:
+            result = subprocess.run(
+                [str(self.pip_path), "freeze"],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=env,
+            )
+        except Exception as exc:
+            logger.warning("pip freeze (bootstrap snapshot) failed: %s", exc)
+            return set()
+
+        names = set()
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            m = self._FREEZE_NAME_RE.match(line)
+            if m:
+                names.add(m.group(1).lower())
+        return names
 
     def _resolve_python(self) -> str:
         """Return the Python executable to use for venv creation.
@@ -269,6 +299,46 @@ class VenvManager:
         except Exception as exc:
             logger.error("Force-install error for %s: %s", package_spec, exc)
             return InstallResult(success=False, returncode=-1, stdout="", stderr=str(exc), combined_output=f"ERROR: {exc}")
+
+    _FREEZE_NAME_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==")
+    _FREEZE_EXCLUDE = {"pip", "setuptools", "wheel"}
+
+    def freeze(self, timeout: int = 30) -> list[str]:
+        """Return `pip freeze` output as sorted "name==version" lines.
+
+        Captures the full set of packages actually installed in the venv —
+        pip's resolver has already worked out the transitive closure — excluding
+        whatever was already present right after create() (pip/setuptools/wheel
+        and anything they pulled in, e.g. packaging), since those aren't
+        dependencies of the requirements that were installed afterward.
+        """
+        env = {**os.environ, "PIP_NO_COLOR": "1", "PIP_DISABLE_PIP_VERSION_CHECK": "1"}
+        try:
+            result = subprocess.run(
+                [str(self.pip_path), "freeze"],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=env,
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning("pip freeze timed out after %ds", timeout)
+            return []
+        except Exception as exc:
+            logger.warning("pip freeze failed: %s", exc)
+            return []
+
+        excluded = self._FREEZE_EXCLUDE | self._bootstrap_packages
+        lines = []
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            m = self._FREEZE_NAME_RE.match(line)
+            if m and m.group(1).lower() in excluded:
+                continue
+            lines.append(line)
+        return sorted(lines, key=str.lower)
 
     def run_pip_check(self) -> str:
         """Run `pip check` and return combined output.

@@ -1,6 +1,6 @@
 # py-conflict-resolver
 
-Automatically resolve Python package version conflicts using an LLM-powered agent. Provide a `requirements.txt`, and the tool installs packages in a temporary virtual environment, asks an LLM to fix any conflicts, and retries until it succeeds — then writes a clean resolved file.
+Automatically resolve Python package version conflicts using an LLM-powered agent. Provide a `requirements.txt`, and the tool installs packages in a temporary virtual environment, asks an LLM to fix any conflicts, and retries until it succeeds — then writes a fully pinned resolved file, including transitive dependencies, that can be installed elsewhere with `pip install --no-deps -r requirements.resolved.txt`.
 
 ---
 
