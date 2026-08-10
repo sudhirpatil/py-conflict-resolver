@@ -81,18 +81,10 @@ async def resolve(
     def _run():
         """Runs the blocking agent in a background thread."""
         import sys
-        from conflict_resolver.agent import build_graph
+        from conflict_resolver.agent import ConflictResolverAgent, ManualAnalysisAgent
         from conflict_resolver.config import load_config, LLMConfig, AgentConfig, AppConfig
         from conflict_resolver.llm_factory import create_llm
         from conflict_resolver.venv_manager import VenvManager
-        from conflict_resolver.prompts import (
-            MANUAL_ANALYSIS_SYSTEM_PROMPT,
-            MANUAL_RECOMMENDATIONS_SYSTEM_PROMPT,
-            build_manual_analysis_prompt,
-            build_manual_recommendations_prompt,
-        )
-        from langchain_core.messages import HumanMessage, SystemMessage
-        import re as _re
 
         # --- Queue-based logging handler so we can stream log lines to SSE ---
         # Attach directly to the conflict_resolver package logger so uvicorn's
@@ -158,26 +150,14 @@ async def resolve(
                 python=python_exe,
                 line_callback=pip_callback,
             ) as vm:
-                graph = build_graph(llm, vm, cfg.agent.max_loops, cfg.agent.pip_timeout, cfg.agent.pypi_lookup_enabled)
-
-                initial_state = {
-                    "original_requirements_path": str(req_path),
-                    "original_requirements": original_text,
-                    "current_requirements": original_text,
-                    "attempt_count": 0,
-                    "last_install_success": False,
-                    "last_pip_output": "",
-                    "failed_attempts": [],
-                    "messages": [],
-                    "resolved_requirements": None,
-                    "error_message": None,
-                    "pypi_versions": {},
-                    "pypi_requires_dist": {},
-                    "last_dry_run_output": "",
-                    "partial_install_result": None,
-                }
-
-                final_state = graph.invoke(initial_state)
+                agent = ConflictResolverAgent(
+                    venv_manager=vm,
+                    max_loops=cfg.agent.max_loops,
+                    pip_timeout=cfg.agent.pip_timeout,
+                    pypi_lookup_enabled=cfg.agent.pypi_lookup_enabled,
+                    llm=llm,
+                )
+                result = asyncio.run(agent.resolve(original_text))
 
             req_path.unlink(missing_ok=True)
 
@@ -212,35 +192,26 @@ async def resolve(
                 manual_req_path.unlink(missing_ok=True)
                 manual_pip_output = manual_result.combined_output
 
+                manual_agent = ManualAnalysisAgent(llm=llm)
+
                 logger.info("Generating issue summary and root cause…")
-                analysis_response = llm.invoke([
-                    SystemMessage(content=MANUAL_ANALYSIS_SYSTEM_PROMPT),
-                    HumanMessage(content=build_manual_analysis_prompt(
-                        original_text, manual_pip_output
-                    )),
-                ])
-                analysis_raw = analysis_response.content if isinstance(analysis_response.content, str) else str(analysis_response.content)
-                fence = _re.search(r"```(?:json)?\s*\n?(.*?)```", analysis_raw, _re.DOTALL)
-                analysis_raw = fence.group(1).strip() if fence else analysis_raw.strip()
-                analysis = json.loads(analysis_raw)
-                root_cause = analysis.get("root_cause", "")
+                analysis = asyncio.run(
+                    manual_agent.analyze_issue(requirements=original_text, pip_output=manual_pip_output)
+                )
 
                 logger.info("Generating manual fix recommendations…")
-                rec_response = llm.invoke([
-                    SystemMessage(content=MANUAL_RECOMMENDATIONS_SYSTEM_PROMPT),
-                    HumanMessage(content=build_manual_recommendations_prompt(
-                        original_text, manual_pip_output, root_cause
-                    )),
-                ])
-                rec_raw = rec_response.content if isinstance(rec_response.content, str) else str(rec_response.content)
-                fence = _re.search(r"```(?:json)?\s*\n?(.*?)```", rec_raw, _re.DOTALL)
-                rec_raw = fence.group(1).strip() if fence else rec_raw.strip()
-                recommendations = json.loads(rec_raw)
+                recommendations = asyncio.run(
+                    manual_agent.recommend_fixes(
+                        requirements=original_text,
+                        pip_output=manual_pip_output,
+                        root_cause=analysis.root_cause,
+                    )
+                )
 
                 manual_fix_json = json.dumps({
-                    "issue_summary": analysis.get("issue_summary", ""),
-                    "root_cause": root_cause,
-                    "recommendations": recommendations,
+                    "issue_summary": analysis.issue_summary,
+                    "root_cause": analysis.root_cause,
+                    "recommendations": [r.model_dump() for r in recommendations],
                 })
                 logger.info("Manual fix analysis complete.")
 
@@ -252,8 +223,8 @@ async def resolve(
                     "recommendations": [],
                 })
 
-            if final_state.get("last_install_success") and final_state.get("resolved_requirements"):
-                resolved = final_state["resolved_requirements"]
+            if result.success and result.resolved_requirements:
+                resolved = result.resolved_requirements
                 diff_lines = list(
                     difflib.unified_diff(
                         original_text.splitlines(),
@@ -272,13 +243,13 @@ async def resolve(
                 }
             else:
                 # Summarise what was tried
-                attempts = final_state.get("failed_attempts", [])
+                attempts = result.failed_attempts
                 summary_lines = []
                 for i, fa in enumerate(attempts, 1):
                     req_diff = fa.get("requirements", "(no diff)")
                     summary_lines.append(f"Attempt {i}:\n{req_diff}")
 
-                last_pip = final_state.get("last_pip_output", "")
+                last_pip = result.last_pip_output
                 # Extract error lines for display
                 error_lines = [
                     ln for ln in last_pip.splitlines()
@@ -286,7 +257,7 @@ async def resolve(
                                                       "no matching distribution"))
                 ]
 
-                partial = final_state.get("partial_install_result") or {}
+                partial = result.partial_install_result or {}
                 if partial:
                     # Attach original + compatible as plain text for UI diff & download
                     partial = {
@@ -297,7 +268,7 @@ async def resolve(
                 final_payload = {
                     "type": "result",
                     "success": False,
-                    "error_message": final_state.get("error_message", "Unknown error"),
+                    "error_message": result.error_message or "Unknown error",
                     "last_pip_errors": "\n".join(error_lines) or last_pip[-2000:],
                     "attempts_summary": "\n\n".join(summary_lines) or "No attempts recorded.",
                     "manual_fix": manual_fix_json,

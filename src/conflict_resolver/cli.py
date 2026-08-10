@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-from conflict_resolver.agent import ResolverState, build_graph
+from conflict_resolver.agent import ConflictResolverAgent, ResolveResult
 from conflict_resolver.config import load_config
 from conflict_resolver.llm_factory import create_llm
 from conflict_resolver.venv_manager import VenvManager
@@ -182,30 +183,19 @@ def main() -> None:
         sys.exit(1)
 
     # Run agent with venv lifecycle managed by context manager
-    final_state: ResolverState | None = None
+    result: ResolveResult | None = None
     try:
         with VenvManager(python=args.python) as vm:
-            graph = build_graph(llm, vm, config.agent.max_loops, config.agent.pip_timeout, config.agent.pypi_lookup_enabled)
-
-            initial_state: ResolverState = {
-                "original_requirements_path": str(requirements_path),
-                "original_requirements": requirements_text,
-                "current_requirements": requirements_text,
-                "attempt_count": 0,
-                "last_install_success": False,
-                "last_pip_output": "",
-                "last_dry_run_output": "",
-                "failed_attempts": [],
-                "messages": [],
-                "resolved_requirements": None,
-                "error_message": None,
-                "pypi_versions": {},
-                "pypi_requires_dist": {},
-                "partial_install_result": None,
-            }
+            agent = ConflictResolverAgent(
+                venv_manager=vm,
+                max_loops=config.agent.max_loops,
+                pip_timeout=config.agent.pip_timeout,
+                pypi_lookup_enabled=config.agent.pypi_lookup_enabled,
+                llm=llm,
+            )
 
             logger.info("Starting conflict-resolution agent loop…")
-            final_state = graph.invoke(initial_state)
+            result = asyncio.run(agent.resolve(requirements_text))
 
     except KeyboardInterrupt:
         logger.error("Interrupted by user")
@@ -215,16 +205,14 @@ def main() -> None:
         sys.exit(1)
 
     # Evaluate outcome
-    if final_state and final_state.get("last_install_success") and final_state.get("resolved_requirements"):
-        output_path.write_text(final_state["resolved_requirements"], encoding="utf-8")
+    if result and result.success and result.resolved_requirements:
+        output_path.write_text(result.resolved_requirements, encoding="utf-8")
         logger.info("Done! Resolved requirements written to: %s", output_path)
         sys.exit(0)
     else:
-        error = (
-            final_state.get("error_message") if final_state else "agent did not complete"
-        )
+        error = result.error_message if result else "agent did not complete"
         logger.error("Failed to resolve conflicts: %s", error)
-        attempts = final_state.get("attempt_count", 0) if final_state else 0
+        attempts = result.attempt_count if result else 0
         logger.error("Gave up after %d attempt(s)", attempts)
         sys.exit(1)
 

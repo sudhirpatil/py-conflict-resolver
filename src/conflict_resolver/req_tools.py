@@ -1,20 +1,22 @@
-"""Structured tool schemas and application logic for LLM-driven requirements editing."""
+"""Structured fix-action schemas and application logic for LLM-driven requirements editing."""
 
 from __future__ import annotations
 
 import logging
 import re
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
-# ─── Tool schemas (passed to llm.bind_tools()) ───────────────────────────────
+# ─── Fix-action schemas (used as NOOA generation-method return types) ────────
 
 
 class SetPackageVersion(BaseModel):
     """Set or update the version constraint for a package that is causing a conflict."""
 
+    kind: Literal["set_package_version"] = "set_package_version"
     package: str = Field(description="Package name (e.g. 'numpy')")
     version_spec: str = Field(
         description="New version specifier (e.g. '==1.24.4' or '>=1.0,<2.0')"
@@ -24,6 +26,7 @@ class SetPackageVersion(BaseModel):
 class RemovePackage(BaseModel):
     """Remove a package from requirements.txt when no compatible version exists."""
 
+    kind: Literal["remove_package"] = "remove_package"
     package: str = Field(description="Package name to remove")
     reason: str = Field(description="Brief reason why this package must be removed")
 
@@ -31,9 +34,12 @@ class RemovePackage(BaseModel):
 class AddPackage(BaseModel):
     """Add a new package pin (e.g. to pin a transitive dependency that causes the conflict)."""
 
+    kind: Literal["add_package"] = "add_package"
     package: str = Field(description="Package name to add")
     version_spec: str = Field(description="Version specifier (e.g. '==1.2.3')")
 
+
+FixAction = SetPackageVersion | RemovePackage | AddPackage
 
 # ─── Line matching helpers ────────────────────────────────────────────────────
 
@@ -64,64 +70,50 @@ def _find_line_index(lines: list[str], package: str) -> int | None:
 # ─── Public API ───────────────────────────────────────────────────────────────
 
 
-def apply_tool_calls(requirements_text: str, tool_calls: list[dict]) -> str:
-    """Apply a list of LLM tool calls to *requirements_text* and return the result.
+def apply_fix_actions(requirements_text: str, actions: list[FixAction]) -> str:
+    """Apply a list of LLM-proposed fix actions to *requirements_text* and return the result.
 
-    Each element of *tool_calls* is a dict with at minimum:
-      - "name": one of "SetPackageVersion", "RemovePackage", "AddPackage"
-      - "args": dict of keyword arguments matching the corresponding schema
-
-    Tool calls are applied in order; later calls see the result of earlier ones.
-    Unknown tool names are logged and skipped.
+    Actions are applied in order; later actions see the result of earlier ones.
     """
     lines = requirements_text.splitlines()
 
-    for call in tool_calls:
-        name = call.get("name", "")
-        args = call.get("args", {})
-
-        if name == "SetPackageVersion":
-            package = args.get("package", "")
-            version_spec = args.get("version_spec", "")
-            logger.info("Tool call: set_package_version %s %s", package, version_spec)
-            idx = _find_line_index(lines, package)
+    for action in actions:
+        if isinstance(action, SetPackageVersion):
+            logger.info("Fix action: set_package_version %s %s", action.package, action.version_spec)
+            idx = _find_line_index(lines, action.package)
             if idx is not None:
                 # Preserve any trailing comment on the original line
                 m = _REQ_LINE_RE.match(lines[idx].strip())
                 comment = m.group(3) or "" if m else ""
-                lines[idx] = f"{package}{version_spec}{comment}"
+                lines[idx] = f"{action.package}{action.version_spec}{comment}"
             else:
                 logger.info(
-                    "Package %r not found in requirements — appending new line", package
+                    "Package %r not found in requirements — appending new line", action.package
                 )
-                lines.append(f"{package}{version_spec}")
+                lines.append(f"{action.package}{action.version_spec}")
 
-        elif name == "RemovePackage":
-            package = args.get("package", "")
-            reason = args.get("reason", "")
-            logger.info("Tool call: remove_package %s (%s)", package, reason)
-            idx = _find_line_index(lines, package)
+        elif isinstance(action, RemovePackage):
+            logger.info("Fix action: remove_package %s (%s)", action.package, action.reason)
+            idx = _find_line_index(lines, action.package)
             if idx is not None:
-                lines[idx] = f"# REMOVED: {package} - {reason}"
+                lines[idx] = f"# REMOVED: {action.package} - {action.reason}"
             else:
                 logger.warning(
-                    "remove_package: package %r not found in requirements", package
+                    "remove_package: package %r not found in requirements", action.package
                 )
 
-        elif name == "AddPackage":
-            package = args.get("package", "")
-            version_spec = args.get("version_spec", "")
-            logger.info("Tool call: add_package %s%s", package, version_spec)
+        elif isinstance(action, AddPackage):
+            logger.info("Fix action: add_package %s%s", action.package, action.version_spec)
             # Only add if not already present
-            if _find_line_index(lines, package) is None:
-                lines.append(f"{package}{version_spec}")
+            if _find_line_index(lines, action.package) is None:
+                lines.append(f"{action.package}{action.version_spec}")
             else:
                 logger.info(
                     "add_package: %r already present — use set_package_version to update it",
-                    package,
+                    action.package,
                 )
 
         else:
-            logger.warning("Unknown tool call name %r — skipping", name)
+            logger.warning("Unknown fix action type %r — skipping", type(action).__name__)
 
     return "\n".join(lines)

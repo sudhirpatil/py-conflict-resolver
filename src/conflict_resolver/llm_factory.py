@@ -1,10 +1,10 @@
-"""Factory for creating LangChain chat model instances from config."""
+"""Factory for creating NOOA LLM clients from config."""
 
 from __future__ import annotations
 
 import os
 
-from langchain_core.language_models.chat_models import BaseChatModel
+from nooa.unifiedllm import UnifiedLLM, get_llm_client
 
 from conflict_resolver.config import LLMConfig
 
@@ -15,38 +15,22 @@ ENV_VARS: dict[str, str] = {
     "gemini": "GOOGLE_API_KEY",
 }
 
+# litellm routes OpenAI/Anthropic model names as-is; Google models need this prefix.
+_MODEL_PREFIX: dict[str, str] = {"gemini": "gemini/"}
 
-def create_llm(config: LLMConfig) -> BaseChatModel:
-    """Return a LangChain BaseChatModel for the configured provider and model.
 
-    Lazy-imports the provider package so only the selected provider's
-    langchain package needs to be installed.
-    """
+def create_llm(config: LLMConfig) -> UnifiedLLM:
+    """Return a NOOA UnifiedLLM client for the configured provider and model."""
     _check_api_key(config.provider)
 
-    match config.provider:
-        case "openai":
-            from langchain_openai import ChatOpenAI  # type: ignore[import]
+    if config.provider not in ENV_VARS:
+        raise ValueError(
+            f"Unknown provider {config.provider!r}. "
+            f"Valid providers: {list(ENV_VARS)}"
+        )
 
-            return ChatOpenAI(model=config.model, temperature=config.temperature)
-
-        case "anthropic":
-            from langchain_anthropic import ChatAnthropic  # type: ignore[import]
-
-            return ChatAnthropic(model=config.model, temperature=config.temperature)
-
-        case "gemini":
-            from langchain_google_genai import ChatGoogleGenerativeAI  # type: ignore[import]
-
-            return ChatGoogleGenerativeAI(
-                model=config.model, temperature=config.temperature
-            )
-
-        case _:
-            raise ValueError(
-                f"Unknown provider {config.provider!r}. "
-                f"Valid providers: {list(ENV_VARS)}"
-            )
+    model = _MODEL_PREFIX.get(config.provider, "") + config.model
+    return get_llm_client(model, temperature=config.temperature)
 
 
 def _check_api_key(provider: str) -> None:

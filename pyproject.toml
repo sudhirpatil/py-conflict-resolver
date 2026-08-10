@@ -6,13 +6,9 @@ build-backend = "hatchling.build"
 name = "py-conflict-resolver"
 version = "0.1.0"
 description = "Resolve Python package version conflicts using LLM agents"
-requires-python = ">=3.11"
+requires-python = ">=3.12,<3.14"
 dependencies = [
-    "langgraph>=0.2",
-    "langchain-core>=0.2",
-    "langchain-openai>=0.1",
-    "langchain-anthropic>=0.1",
-    "langchain-google-genai>=1.0",
+    "nooa>=0.0.8",
     "pydantic>=2.0",
     "python-dotenv>=1.0",
 ]
